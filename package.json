@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "@azure/cosmos": "^4.4.1",
+    "@types/node": "^24.3.1",
     "@testing-library/react": "^16.3.0",
     "@types/react": "^19.1.8",
     "@types/uuid": "^10.0.0",
