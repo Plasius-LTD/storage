@@ -12,7 +12,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Changed**
-  - (placeholder)
+  - Replace dual-`tsc` build steps with `tsup` to emit ESM + CJS + types side-by-side in `dist/` (`index.js`, `index.cjs`, `index.d.ts`).
 
 - **Fixed**
   - (placeholder)
