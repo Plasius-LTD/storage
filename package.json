@@ -1,6 +1,6 @@
 {
   "name": "@plasius/storage",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
   "private": false,
