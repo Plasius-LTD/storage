@@ -32,7 +32,7 @@
   "dependencies": {
     "@azure/storage-file-share": "^12.27.0",
     "@plasius/entity-manager": "^1.0.4",
-    "@plasius/schema": "^1.0.0"
+    "@plasius/schema": "^1.2.1"
   },
   "devDependencies": {
     "@azure/cosmos": "^4.4.1",
