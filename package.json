@@ -21,7 +21,9 @@
     "audit:test": "vitest run --coverage",
     "audit:all": "npm-run-all -l audit:ts audit:eslint audit:deps audit:npm audit:test",
     "lint": "eslint .",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "pack:check": "node scripts/verify-public-package.cjs",
+    "prepublishOnly": "npm run build && npm run pack:check"
   },
   "author": "Plasius LTD <development@plasius.co.uk>",
   "license": "MIT",
