@@ -1,6 +1,6 @@
 {
   "name": "@plasius/storage",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
   "private": false,
@@ -33,8 +33,8 @@
   },
   "dependencies": {
     "@azure/storage-file-share": "^12.27.0",
-    "@plasius/entity-manager": "^1.0.5",
-    "@plasius/schema": "^1.2.1"
+    "@plasius/entity-manager": "^1.0.6",
+    "@plasius/schema": "^1.2.2"
   },
   "devDependencies": {
     "@azure/cosmos": "^4.4.1",
