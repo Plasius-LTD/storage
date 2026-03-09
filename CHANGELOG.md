@@ -12,6 +12,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Changed**
+  - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.0.10] - 2026-03-09
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
   - Raised the minimum `@plasius/schema` dependency to `^1.2.6` to align with field exposure and safe serialization support across shared packages.
 
 - **Fixed**
@@ -132,7 +146,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.0.10...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -154,3 +168,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.0.4]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.4
 [1.0.5]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.5
 [1.0.9]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.9
+[1.0.10]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.10
