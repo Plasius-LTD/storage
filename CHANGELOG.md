@@ -12,10 +12,10 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Changed**
-  - (placeholder)
+  - Refreshed direct runtime, peer, and developer dependencies to the current patch releases used by this package.
 
 - **Fixed**
-  - (placeholder)
+  - `uploadUserImageShare()` now derives file extensions from supported image MIME types and normalizes unsafe `userId` values into Azure Files-safe directory names.
 
 - **Security**
   - (placeholder)

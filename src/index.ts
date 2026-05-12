@@ -5,6 +5,55 @@ interface UploadOptions {
   baseDelayMs?: number;
 }
 
+const SUPPORTED_IMAGE_EXTENSIONS = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/avif": "avif",
+} as const;
+
+const SAFE_USER_DIRECTORY_PATTERN = /^[A-Za-z0-9._-]{1,255}$/u;
+const ENCODED_USER_DIRECTORY_PREFIX = "~b64~";
+
+type SupportedImageContentType = keyof typeof SUPPORTED_IMAGE_EXTENSIONS;
+
+function normalizeUserDirectoryName(userId: string): string {
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) {
+    throw new Error("userId is required and must be a string.");
+  }
+
+  if (SAFE_USER_DIRECTORY_PATTERN.test(trimmedUserId)) {
+    return trimmedUserId;
+  }
+
+  const encodedDirectoryName = `${ENCODED_USER_DIRECTORY_PREFIX}${Buffer.from(
+    trimmedUserId,
+    "utf8"
+  ).toString("base64url")}`;
+
+  if (encodedDirectoryName.length > 255) {
+    throw new Error(
+      "userId must resolve to an Azure Files-safe path segment no longer than 255 characters."
+    );
+  }
+
+  return encodedDirectoryName;
+}
+
+function normalizeContentType(contentType: string): SupportedImageContentType {
+  const normalizedContentType = contentType.trim().toLowerCase();
+  if (normalizedContentType in SUPPORTED_IMAGE_EXTENSIONS) {
+    return normalizedContentType as SupportedImageContentType;
+  }
+
+  throw new Error(
+    "contentType must be one of: image/png, image/jpeg, image/jpg, image/webp, image/gif, image/avif."
+  );
+}
+
 /**
  * Uploads a user image to Azure File Share storage with retries and error handling.
  * @param userId - The user's ID (used as directory name)
@@ -27,7 +76,7 @@ export async function uploadUserImageShare(
       "AZURE_STORAGE_CONNECTION_STRING is not set in environment variables."
     );
   }
-  if (!userId || typeof userId !== "string") {
+  if (typeof userId !== "string" || !userId.trim()) {
     throw new Error("userId is required and must be a string.");
   }
   if (typeof version !== "number" || isNaN(version)) {
@@ -36,16 +85,17 @@ export async function uploadUserImageShare(
   if (!buffer || !(buffer instanceof Buffer)) {
     throw new Error("buffer is required and must be a Buffer.");
   }
-  if (!contentType || typeof contentType !== "string") {
+  if (typeof contentType !== "string" || !contentType.trim()) {
     throw new Error("contentType is required and must be a string.");
   }
 
   const maxRetries = options.maxRetries ?? 3;
   const baseDelayMs = options.baseDelayMs ?? 500;
+  const normalizedContentType = normalizeContentType(contentType);
 
   const shareName = "avatars";
-  const directoryName = userId;
-  const fileName = `${version}.jpg`;
+  const directoryName = normalizeUserDirectoryName(userId);
+  const fileName = `${version}.${SUPPORTED_IMAGE_EXTENSIONS[normalizedContentType]}`;
 
   const serviceClient = ShareServiceClient.fromConnectionString(
     process.env.AZURE_STORAGE_CONNECTION_STRING
@@ -65,7 +115,7 @@ export async function uploadUserImageShare(
       await directoryClient.createIfNotExists();
       // Create file (set size)
       await fileClient.create(buffer.length, {
-        fileHttpHeaders: { fileContentType: contentType },
+        fileHttpHeaders: { fileContentType: normalizedContentType },
       });
       // Upload content
       await fileClient.uploadRange(buffer, 0, buffer.length);

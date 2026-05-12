@@ -1,6 +1,6 @@
 {
   "name": "@plasius/storage",
-  "version": "1.0.13",
+  "version": "1.0.11",
   "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
   "private": false,
@@ -29,21 +29,21 @@
   "author": "Plasius LTD <development@plasius.co.uk>",
   "license": "MIT",
   "peerDependencies": {
-    "@azure/cosmos": "^4.4.1",
+    "@azure/cosmos": "^4.9.3",
     "react": "^19"
   },
   "dependencies": {
-    "@azure/storage-file-share": "^12.30.0",
-    "@plasius/entity-manager": "^1.0.16",
-    "@plasius/schema": "^1.2.11"
+    "@azure/storage-file-share": "^12.27.0",
+    "@plasius/entity-manager": "^1.0.15",
+    "@plasius/schema": "^1.2.10"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@azure/cosmos": "^4.9.3",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.0",
     "@types/node": "^25.7.0",
-    "@types/react": "^19.2.14",
-    "@types/uuid": "^11.0.0",
+    "@types/react": "^19.1.8",
+    "@types/uuid": "^10.0.0",
     "@typescript-eslint/eslint-plugin": "^8.59.3",
     "@typescript-eslint/parser": "^8.59.3",
     "@vitest/coverage-v8": "^4.1.6",
@@ -52,8 +52,8 @@
     "globals": "^17.6.0",
     "npm-run-all": "^4.1.5",
     "react": "^19.2.6",
-    "tsup": "^8.5.1",
-    "tsx": "^4.21.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6",
     "zod": "^4.4.3"

@@ -99,6 +99,8 @@ describe("uploadUserImageShare", () => {
     expect(url).toBe(mockState.fileClient.url);
     expect(mockState.shareClient.createIfNotExists).toHaveBeenCalledOnce();
     expect(mockState.directoryClient.createIfNotExists).toHaveBeenCalledOnce();
+    expect(mockState.shareClient.getDirectoryClient).toHaveBeenCalledWith("user-1");
+    expect(mockState.directoryClient.getFileClient).toHaveBeenCalledWith("1.jpg");
     expect(mockState.fileClient.create).toHaveBeenCalledWith(buffer.length, {
       fileHttpHeaders: { fileContentType: "image/jpeg" },
     });
@@ -107,6 +109,41 @@ describe("uploadUserImageShare", () => {
       0,
       buffer.length
     );
+  });
+
+  it("derives the uploaded file extension from the supported MIME type", async () => {
+    const buffer = Buffer.from("png-data");
+
+    await uploadUserImageShare("user-1", 2, buffer, "image/png");
+
+    expect(mockState.shareClient.getDirectoryClient).toHaveBeenCalledWith("user-1");
+    expect(mockState.directoryClient.getFileClient).toHaveBeenCalledWith("2.png");
+    expect(mockState.fileClient.create).toHaveBeenCalledWith(buffer.length, {
+      fileHttpHeaders: { fileContentType: "image/png" },
+    });
+  });
+
+  it("rejects unsupported content types before Azure client calls", async () => {
+    await expect(
+      uploadUserImageShare("user-1", 1, Buffer.from("data"), "image/svg+xml")
+    ).rejects.toThrow(
+      "contentType must be one of: image/png, image/jpeg, image/jpg, image/webp, image/gif, image/avif."
+    );
+
+    expect(ShareServiceClient.fromConnectionString).not.toHaveBeenCalled();
+    expect(mockState.shareClient.getDirectoryClient).not.toHaveBeenCalled();
+  });
+
+  it("normalizes unsafe user IDs into Azure Files-safe directory tokens", async () => {
+    const unsafeUserId = "user/1@example.com";
+    const expectedDirectoryName = `~b64~${Buffer.from(unsafeUserId).toString("base64url")}`;
+
+    await uploadUserImageShare(unsafeUserId, 4, Buffer.from("data"), "image/webp");
+
+    expect(mockState.shareClient.getDirectoryClient).toHaveBeenCalledWith(
+      expectedDirectoryName
+    );
+    expect(mockState.directoryClient.getFileClient).toHaveBeenCalledWith("4.webp");
   });
 
   it("retries after failures and succeeds on a later attempt", async () => {
