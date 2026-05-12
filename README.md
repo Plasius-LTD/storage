@@ -20,8 +20,12 @@ npm install @plasius/storage
 ## Usage
 
 ```ts
-import { createShareClient } from "@plasius/storage";
+import { uploadUserImageShare } from "@plasius/storage";
+
+await uploadUserImageShare("user-123", 1, Buffer.from("avatar"), "image/png");
 ```
+
+`uploadUserImageShare()` supports `image/png`, `image/jpeg`, `image/jpg`, `image/webp`, `image/gif`, and `image/avif`, and it normalizes unsafe `userId` values before using them as Azure Files directory names.
 
 ## Development
 
