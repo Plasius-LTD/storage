@@ -46,7 +46,7 @@ jobs:
             }
 
             try {
-              const runners = await github.paginate(
+              const repoRunners = await github.paginate(
                 github.rest.actions.listSelfHostedRunnersForRepo,
                 {
                   owner: context.repo.owner,
@@ -54,6 +54,22 @@ jobs:
                   per_page: 100,
                 }
               )
+              let orgRunners = []
+              try {
+                orgRunners = await github.paginate(
+                  github.rest.actions.listSelfHostedRunnersForOrg,
+                  {
+                    org: context.repo.owner,
+                    per_page: 100,
+                  }
+                )
+              } catch (orgError) {
+                core.info(
+                  `Could not inspect organization self-hosted runners; continuing with repository runners only. ${orgError.message}`
+                )
+              }
+
+              const runners = [...repoRunners, ...orgRunners]
 
               const hasMatchingIdleRunner = runners.some((runner) => {
                 const labels = new Set((runner.labels || []).map((label) => label.name))
