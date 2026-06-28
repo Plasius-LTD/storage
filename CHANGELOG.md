@@ -12,6 +12,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Changed**
+  - Refreshed `@azure/storage-file-share` to `12.32.0` and aligned the published `@plasius/entity-manager` and `@plasius/schema` dependencies with their latest released versions.
   - (placeholder)
 
 - **Fixed**
