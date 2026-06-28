@@ -12,6 +12,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Changed**
+  - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.0.18] - 2026-06-28
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
   - Refreshed `@azure/storage-file-share` to `12.32.0` and aligned the published `@plasius/entity-manager` and `@plasius/schema` dependencies with their latest released versions.
   - (placeholder)
 
@@ -232,7 +246,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.0.17...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.0.18...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -261,3 +275,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.0.14]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.14
 [1.0.16]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.16
 [1.0.17]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.17
+[1.0.18]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.18
