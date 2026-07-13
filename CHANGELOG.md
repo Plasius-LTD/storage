@@ -13,6 +13,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 - **Changed**
   - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.0.19] - 2026-07-13
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
   - Consume the propagated entity-manager and RFC-remediated schema releases (task #26).
 
 - **Fixed**
@@ -247,7 +261,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.0.18...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.0.19...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -277,3 +291,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.0.16]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.16
 [1.0.17]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.17
 [1.0.18]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.18
+[1.0.19]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.19
