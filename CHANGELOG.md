@@ -9,16 +9,17 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 - **Added**
-  - (placeholder)
+  - Add the server-only `@plasius/storage/immutable-assets` API for conditionally writing, fully verifying, and marker-first reading immutable model, GPU-interface, WGSL-shader, style-profile, and qualification-evidence Blob versions (task #27).
+  - Document the immutable version protocol, injected Blob-port boundary, threat model, and package ownership decisions in ADR-0003 and TDR-0001.
 
 - **Changed**
-  - (placeholder)
+  - Align immutable package admission with the shader lifecycle ceiling of one manifest plus at most 512 payloads and keep catalog, authorization, feature-flag, capability, and shader-domain decisions outside the storage package.
 
 - **Fixed**
-  - (placeholder)
+  - Pin releases to the workflow-dispatch commit and require a fresh dispatch after metadata lands, preventing protected-branch drift from diverging version scope, tags, package bytes, and npm provenance.
 
 - **Security**
-  - (placeholder)
+  - Require create-if-absent writes, service-computed SHA-256 metadata, manifest-last completion, marker-bound stored-byte re-verification, no write-path delete authority, path allowlisting, and URL/SAS-free receipts and diagnostics for immutable asset versions.
 
 ## [1.0.19] - 2026-07-13
 
