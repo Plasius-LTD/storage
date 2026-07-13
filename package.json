@@ -30,8 +30,8 @@
   "license": "MIT",
   "dependencies": {
     "@azure/storage-file-share": "^12.32.0",
-    "@plasius/entity-manager": "^1.0.21",
-    "@plasius/schema": "^1.2.17"
+    "@plasius/entity-manager": "^1.0.23",
+    "@plasius/schema": "^1.2.18"
   },
   "devDependencies": {
     "@azure/cosmos": "^4.9.3",
