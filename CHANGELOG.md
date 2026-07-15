@@ -9,6 +9,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 - **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.1.0] - 2026-07-15
+
+- **Added**
   - Add the server-only `@plasius/storage/immutable-assets` API for conditionally writing, fully verifying, and marker-first reading immutable model, GPU-interface, WGSL-shader, style-profile, and qualification-evidence Blob versions (task #27).
   - Document the immutable version protocol, injected Blob-port boundary, threat model, and package ownership decisions in ADR-0003 and TDR-0001.
 
@@ -262,7 +276,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.0.19...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.1.0...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -293,3 +307,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.0.17]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.17
 [1.0.18]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.18
 [1.0.19]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.19
+[1.1.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.1.0
