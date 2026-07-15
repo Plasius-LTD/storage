@@ -13,6 +13,7 @@ import {
   readImmutableAssetVersionFile,
   verifyImmutableAssetVersion,
   type BlobContainerPort,
+  type BlobDownloadResponsePort,
   type BlockBlobClientPort,
   type CreateImmutableAssetVersionInput,
   type ImmutableAssetIdentity,
@@ -166,6 +167,58 @@ function cloneStored(blob: StoredBlob): StoredBlob {
     metadata: { ...blob.metadata },
     etag: blob.etag,
     ...(blob.contentLength === undefined ? {} : { contentLength: blob.contentLength }),
+  };
+}
+
+interface MutableManifestFile {
+  path: string;
+  sha256: string;
+  byteLength: number;
+  contentType: string;
+}
+
+interface MutableManifest {
+  schema: string;
+  identity: {
+    kind: string;
+    id: string;
+    version: string;
+  };
+  root: string;
+  files: MutableManifestFile[];
+  payloadFileCount: number;
+  payloadByteLength: number;
+}
+
+function storedManifest(container: MemoryBlobContainer): MutableManifest {
+  const marker = container.blobs.get(markerPath()) as StoredBlob;
+  return JSON.parse(new TextDecoder().decode(marker.bytes)) as MutableManifest;
+}
+
+function replaceMarkerBytes(
+  container: MemoryBlobContainer,
+  manifest: MutableManifest,
+  trailingNewline = true
+): void {
+  const marker = container.blobs.get(markerPath()) as StoredBlob;
+  marker.bytes = bytes(`${JSON.stringify(manifest)}${trailingNewline ? "\n" : ""}`);
+}
+
+function overrideDownload(
+  container: MemoryBlobContainer,
+  overriddenPath: string,
+  transform: (response: BlobDownloadResponsePort) => BlobDownloadResponsePort
+): BlobContainerPort {
+  return {
+    getBlockBlobClient: (path) => {
+      const delegated = container.getBlockBlobClient(path);
+      if (path !== overriddenPath) return delegated;
+      return {
+        uploadData: delegated.uploadData,
+        download: async (offset, count, options) =>
+          transform(await delegated.download(offset, count, options)),
+      };
+    },
   };
 }
 
@@ -412,6 +465,52 @@ describe("immutable asset version creation", () => {
 });
 
 describe("immutable identity, path, and MIME validation", () => {
+  it("rejects malformed identity and creation envelopes before Blob access", async () => {
+    const container = new MemoryBlobContainer();
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(
+        container,
+        null as unknown as ImmutableAssetIdentity
+      ),
+      "INVALID_IDENTITY"
+    );
+    await rejectedStorageError(
+      createImmutableAssetVersion(
+        container,
+        input(undefined, { ...identity, id: "-invalid" })
+      ),
+      "INVALID_IDENTITY"
+    );
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, {
+        identity: { kind: "shader", id: "missing-version" },
+        files: [],
+      } as unknown as CreateImmutableAssetVersionInput),
+      "INVALID_IDENTITY"
+    );
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, {
+        identity,
+        files: { 0: input().files[0], length: 1 },
+      } as unknown as CreateImmutableAssetVersionInput),
+      "INVALID_ARGUMENT"
+    );
+    await rejectedStorageError(
+      createImmutableAssetVersion(
+        container,
+        input([null as unknown as CreateImmutableAssetVersionInput["files"][number]])
+      ),
+      "INVALID_ARGUMENT"
+    );
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, input([])),
+      "INVALID_ARGUMENT"
+    );
+
+    expect(container.operations).toEqual([]);
+  });
+
   it.each([
     "latest",
     "current",
@@ -613,6 +712,44 @@ describe("immutable identity, path, and MIME validation", () => {
     expect(nonString.operations).toEqual([]);
   });
 
+  it("infers every allowlisted known-extension MIME and rejects a safe but mismatched MIME", async () => {
+    const expected = new Map([
+      ["scene.gltf", "model/gltf+json"],
+      ["scene.glb", "model/gltf-binary"],
+      ["codec.wasm", "application/wasm"],
+      ["albedo.png", "image/png"],
+      ["photo.jpg", "image/jpeg"],
+      ["photo.jpeg", "image/jpeg"],
+      ["albedo.webp", "image/webp"],
+      ["albedo.avif", "image/avif"],
+      ["albedo.ktx2", "image/ktx2"],
+      ["notes.txt", "text/plain; charset=utf-8"],
+    ]);
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(
+      container,
+      input([...expected.keys()].map((path) => ({ path, bytes: bytes(path) })))
+    );
+
+    for (const [path, contentType] of expected) {
+      expect(container.blobs.get(`${prefix()}/${path}`)?.contentType).toBe(contentType);
+    }
+
+    const mismatch = new MemoryBlobContainer();
+    await rejectedStorageError(
+      createImmutableAssetVersion(
+        mismatch,
+        input([{
+          path: "shader.wgsl",
+          bytes: bytes("shader"),
+          contentType: "application/json",
+        }])
+      ),
+      "INVALID_ARGUMENT"
+    );
+    expect(mismatch.operations).toEqual([]);
+  });
+
   it("validates operation limits and structural ports synchronously", async () => {
     const container = new MemoryBlobContainer();
     await rejectedStorageError(
@@ -622,6 +759,17 @@ describe("immutable identity, path, and MIME validation", () => {
     await rejectedStorageError(
       createImmutableAssetVersion(container, input(), {
         maxFileBytes: 2,
+        maxVersionBytes: 1,
+      }),
+      "INVALID_ARGUMENT"
+    );
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, input(), { timeoutMs: 0 }),
+      "INVALID_ARGUMENT"
+    );
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, input(), {
+        maxFileBytes: 0,
         maxVersionBytes: 1,
       }),
       "INVALID_ARGUMENT"
@@ -792,6 +940,77 @@ describe("exact replay and completion marker races", () => {
     expect(container.blobs.has(`${prefix()}/material.wgsl`)).toBe(true);
     expect(container.blobs.has(markerPath())).toBe(true);
   });
+
+  it("rejects a corrupt pre-existing completion marker before payload writes", async () => {
+    const container = new MemoryBlobContainer();
+    container.putDirect(markerPath(), {
+      bytes: bytes("not-a-manifest"),
+      contentType: "application/json",
+      metadata: {
+        plasiusassetid: identity.id,
+        PLASIUSASSETID: identity.id,
+      },
+    });
+
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, input()),
+      "VERSION_CONFLICT"
+    );
+
+    expect(container.operations.filter((operation) => operation.type === "upload")).toEqual([]);
+  });
+
+  it("rejects an otherwise matching pre-existing marker without an ETag", async () => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(container, input());
+    (container.blobs.get(markerPath()) as StoredBlob).etag = "";
+    container.clearOperations();
+
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, input()),
+      "VERSION_CONFLICT"
+    );
+
+    expect(container.operations.filter((operation) => operation.type === "upload")).toEqual([]);
+  });
+
+  it("rejects a successful conditional Blob create that omits its required ETag", async () => {
+    const container = new MemoryBlobContainer();
+    const missingEtag: BlobContainerPort = {
+      getBlockBlobClient: (path) => {
+        const delegated = container.getBlockBlobClient(path);
+        return {
+          download: delegated.download,
+          uploadData: async () => ({}),
+        };
+      },
+    };
+
+    await rejectedStorageError(
+      createImmutableAssetVersion(missingEtag, input()),
+      "STORAGE_OPERATION_FAILED"
+    );
+  });
+
+  it("rejects a competing exact marker race when the observed marker has no ETag", async () => {
+    const container = new MemoryBlobContainer();
+    container.onUpload = (path, data, options, target) => {
+      if (path === markerPath() && !target.blobs.has(path)) {
+        target.putDirect(path, {
+          bytes: data,
+          contentType: options.blobHTTPHeaders.blobContentType,
+          metadata: { ...options.metadata },
+          etag: "",
+        });
+      }
+    };
+
+    await rejectedStorageError(
+      createImmutableAssetVersion(container, input()),
+      "BLOB_CORRUPT"
+    );
+    expect(container.blobs.has(`${prefix()}/material.wgsl`)).toBe(true);
+  });
 });
 
 describe("abort, deadline, and bounded work", () => {
@@ -951,6 +1170,117 @@ describe("full-version verification and marker binding", () => {
     );
   });
 
+  it.each([
+    {
+      name: "missing metadata",
+      transform: (response: BlobDownloadResponsePort): BlobDownloadResponsePort => {
+        const { metadata: _metadata, ...withoutMetadata } = response;
+        return withoutMetadata;
+      },
+    },
+    {
+      name: "case-insensitive duplicate metadata",
+      transform: (response: BlobDownloadResponsePort): BlobDownloadResponsePort => ({
+        ...response,
+        metadata: {
+          ...response.metadata,
+          PLASIUSASSETID: identity.id,
+        },
+      }),
+    },
+    {
+      name: "negative response length",
+      transform: (response: BlobDownloadResponsePort): BlobDownloadResponsePort => ({
+        ...response,
+        contentLength: -1,
+      }),
+    },
+    {
+      name: "missing content type",
+      transform: (response: BlobDownloadResponsePort): BlobDownloadResponsePort => {
+        const { contentType: _contentType, ...withoutContentType } = response;
+        return withoutContentType;
+      },
+    },
+    {
+      name: "missing non-empty byte stream",
+      transform: (response: BlobDownloadResponsePort): BlobDownloadResponsePort => {
+        const { readableStreamBody: _body, ...withoutBody } = response;
+        return withoutBody;
+      },
+    },
+  ])("fails closed for a payload response with $name", async ({ transform }) => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(container, input());
+    const adversarial = overrideDownload(
+      container,
+      `${prefix()}/material.wgsl`,
+      transform
+    );
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(adversarial, identity),
+      "BLOB_CORRUPT"
+    );
+  });
+
+  it("rejects a response length above the operation-specific read budget before allocation", async () => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(container, input());
+    const adversarial = overrideDownload(container, markerPath(), (response) => ({
+      ...response,
+      contentLength: 2 * 1024 * 1024 + 1,
+    }));
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(adversarial, identity),
+      "LIMIT_EXCEEDED"
+    );
+  });
+
+  it("rejects a non-binary download chunk before copying attacker-controlled data", async () => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(container, input());
+    const adversarial = overrideDownload(
+      container,
+      `${prefix()}/material.wgsl`,
+      (response) => ({
+        ...response,
+        readableStreamBody: (async function* () {
+          yield "not-bytes";
+        })() as unknown as AsyncIterable<Uint8Array>,
+      })
+    );
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(adversarial, identity),
+      "BLOB_CORRUPT"
+    );
+  });
+
+  it("bounds the number of non-empty download chunks", async () => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(container, input());
+    const adversarial = overrideDownload(
+      container,
+      `${prefix()}/material.wgsl`,
+      (response) => ({
+        ...response,
+        contentLength: 65_537,
+        readableStreamBody: (async function* () {
+          for (let index = 0; index < 65_537; index += 1) {
+            yield new Uint8Array([index % 251]);
+          }
+        })(),
+      })
+    );
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(adversarial, identity),
+      "BLOB_CORRUPT"
+    );
+  });
+
   it("uses intrinsic download-chunk lengths and returns a typed corruption failure", async () => {
     const container = new MemoryBlobContainer();
     await createImmutableAssetVersion(container, input());
@@ -1090,6 +1420,89 @@ describe("full-version verification and marker binding", () => {
     const digest = createHash("sha256").update(marker.bytes).digest("hex");
     marker.metadata.plasiussha256 = digest;
     marker.metadata.plasiusbytelength = String(marker.bytes.byteLength);
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(container, identity),
+      "INVALID_MANIFEST"
+    );
+  });
+
+  it.each([
+    {
+      name: "wrong identity root",
+      mutate: (manifest: MutableManifest) => {
+        manifest.root = "models";
+      },
+    },
+    {
+      name: "non-record file",
+      mutate: (manifest: MutableManifest) => {
+        manifest.files[0] = null as unknown as MutableManifestFile;
+      },
+    },
+    {
+      name: "duplicate file path",
+      mutate: (manifest: MutableManifest) => {
+        manifest.files[1]!.path = manifest.files[0]!.path;
+      },
+    },
+    {
+      name: "incorrect payload total",
+      mutate: (manifest: MutableManifest) => {
+        manifest.payloadByteLength += 1;
+      },
+    },
+    {
+      name: "noncanonical file ordering",
+      mutate: (manifest: MutableManifest) => {
+        manifest.files.reverse();
+      },
+    },
+  ])("rejects a structurally invalid manifest with $name", async ({ mutate }) => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(
+      container,
+      input([
+        { path: "a.bin", bytes: bytes("aa") },
+        { path: "b.bin", bytes: bytes("bb") },
+      ])
+    );
+    const manifest = storedManifest(container);
+    mutate(manifest);
+    replaceMarkerBytes(container, manifest);
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(container, identity),
+      "INVALID_MANIFEST"
+    );
+  });
+
+  it("rejects a manifest whose accumulated file sizes exceed the bounded version budget", async () => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(
+      container,
+      input([
+        { path: "a.bin", bytes: bytes("aa") },
+        { path: "b.bin", bytes: bytes("bb") },
+      ])
+    );
+    const manifest = storedManifest(container);
+    manifest.payloadByteLength = 3;
+    replaceMarkerBytes(container, manifest);
+
+    await rejectedStorageError(
+      verifyImmutableAssetVersion(container, identity, {
+        maxFileBytes: 2,
+        maxVersionBytes: 3,
+      }),
+      "INVALID_MANIFEST"
+    );
+  });
+
+  it("rejects semantically valid manifest JSON when its bytes are not canonical", async () => {
+    const container = new MemoryBlobContainer();
+    await createImmutableAssetVersion(container, input());
+    replaceMarkerBytes(container, storedManifest(container), false);
 
     await rejectedStorageError(
       verifyImmutableAssetVersion(container, identity),
@@ -1307,6 +1720,12 @@ describe("manifest-gated reads", () => {
 });
 
 describe("intake and runtime store façade", () => {
+  it("rejects a missing store configuration before capturing container authority", () => {
+    expect(() =>
+      createImmutableAssetStore(null as unknown as Parameters<typeof createImmutableAssetStore>[0])
+    ).toThrow(ImmutableAssetStorageError);
+  });
+
   it("captures distinct container ports and rejects a collapsed intake/runtime boundary", async () => {
     const intake = new MemoryBlobContainer();
     const runtime = new MemoryBlobContainer();
