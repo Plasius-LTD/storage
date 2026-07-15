@@ -15,3 +15,72 @@ We aim to acknowledge your report within 2 business days and to provide a more d
 ## Disclosure Policy
 
 We request that you give us the opportunity to address the vulnerability before publicly disclosing it. We will coordinate with you on public disclosure once a fix is available and deployed.
+
+## Immutable Asset Storage Security Boundary
+
+`@plasius/storage/immutable-assets` is a server-only Blob protocol. It is not a
+browser API, generic Blob proxy, catalog authority, shader validator, or
+authentication layer. Hosts must inject private intake/runtime container ports
+backed by least-privilege credentials or managed identities. Do not put account
+keys, connection strings, SAS tokens, signed URLs, or credentials into asset
+manifests, receipts, diagnostics, logs, or client bundles.
+
+The package accepts only a supported immutable asset identity and validated
+manifest-declared relative paths. It rejects absolute paths, traversal,
+reserved marker paths, mutable channel aliases, undeclared files, and arbitrary
+Blob or SAS URLs. Runtime delivery must resolve a promoted catalog reference
+through the authorized model-storage service; it must not expose a storage URL
+as a bypass.
+
+Integrity controls are fail-closed:
+
+- payloads and `_plasius/version-manifest.json` use `If-None-Match: *`;
+- lowercase SHA-256, exact byte length, and safe content type are computed by
+  the service rather than trusted from callers;
+- an existing object is an idempotent replay only when its complete bytes and
+  protocol-owned metadata match;
+- the manifest is written last, then the manifest and every declared payload
+  are re-read and verified;
+- reads verify the marker before resolving and verifying a declared payload;
+- the write API has no delete authority, so it cannot remove payloads already
+  adopted by a concurrent completion marker.
+
+These integrity checks do not authenticate a caller, validate WGSL, prove ABI
+compatibility, establish qualification evidence, or promote a version. The
+calling service must still enforce authentication, authorization, tenant
+isolation, domain schemas, shader/model compatibility, catalog compare-and-swap,
+and audit policy. The site-owned feature flag
+`asset.pipeline.shader-store.enabled` and capability
+`gpu.shader.style.select` remain separate controls and confer no direct Blob
+authority.
+
+## Operational Hardening
+
+- Keep intake and runtime containers private. Prefer separate managed
+  identities so intake can create candidates while runtime can only read
+  promoted exact versions through the model-storage service.
+- Deny public container access and account-key authentication where the Azure
+  deployment supports managed identities and role assignments.
+- Enforce the package ceiling of 513 files total (one marker plus at most 512
+  payloads), along with configured byte, path, metadata, response, and duration
+  budgets.
+- Bound Blob concurrency and supply an abort signal/deadline for every
+  operation. Keep retry policy bounded and outside the package so the host can
+  honor request and incident budgets.
+- Treat all manifest, JSON, WGSL, and opaque fixture bytes as untrusted until
+  their owning admission and domain validators accept them. Content type is not
+  validation.
+- Record bounded structured reason codes and correlation IDs. Do not record
+  payload bytes, manifest bodies, WGSL source, private model metadata, raw Azure
+  responses, account names, authorization headers, URLs, or query strings.
+- Alert on integrity mismatch, immutable conflict, repeated abort/timeout,
+  incomplete-marker reads, retained-partial growth, and attempts to use
+  undeclared paths or URLs.
+- Use retention/lifecycle rules for unreachable partial candidates only after
+  confirming they are not complete or catalog-referenced. Never implement
+  product rollback by overwriting or deleting a published immutable version.
+
+If credentials or a signed URL are exposed, treat the event as a blocking
+incident: revoke/rotate the credential, inspect Blob and catalog audit history,
+invalidate affected access paths, and verify every referenced immutable version
+before restoring service.
