@@ -5,7 +5,7 @@
   "types": "./dist/index.d.ts",
   "private": false,
   "type": "module",
-  "description": "Azure storage and immutable asset-version primitives for Plasius projects",
+  "description": "Azure storage, immutable asset-version, and schema-backed JSON packet primitives for Plasius projects",
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
@@ -71,6 +71,19 @@
         "require": {
           "types": "./dist/immutable-assets.d.cts",
           "default": "./dist/immutable-assets.cjs"
+        }
+      },
+      "default": null
+    },
+    "./immutable-json-packets": {
+      "node": {
+        "import": {
+          "types": "./dist/immutable-json-packets.d.ts",
+          "default": "./dist/immutable-json-packets.js"
+        },
+        "require": {
+          "types": "./dist/immutable-json-packets.d.cts",
+          "default": "./dist/immutable-json-packets.cjs"
         }
       },
       "default": null

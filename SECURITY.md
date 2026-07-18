@@ -54,6 +54,60 @@ and audit policy. The site-owned feature flag
 `gpu.shader.style.select` remain separate controls and confer no direct Blob
 authority.
 
+## Immutable JSON Packet Security Boundary
+
+`@plasius/storage/immutable-json-packets` is a Node-only, schema-backed
+structured storage protocol. It is not an HTTP body parser, free-text PII
+detector, generic Blob proxy, abuse-correlation store, analytics identity
+store, or browser API.
+
+Hosts register fixed, non-overlapping packet-kind prefixes and
+`@plasius/schema`-compatible schemas. Registration fails when a schema reports
+PII fields. Writes accept structured values only and apply safe plain-JSON
+snapshotting, privacy field/value guards, schema validation, canonical
+encoding, byte limits, conditional creation, and SHA-256 metadata. Do not add a
+raw JSON/body/byte upload escape hatch.
+
+Object keys are restricted to bounded machine-field identifiers and receive
+control, email/URL, and sensitive-name screening. Array member limits are
+enforced before key enumeration or proportional allocation. Only exact Blob
+precondition/already-exists signals enter immutable or checkpoint
+reconciliation; lease conflicts use their own exact provider-code classifier.
+Provider-returned ETags are bounded before receipts, reads, or
+compare-and-swap.
+
+The following content is outside this API contract and must be discarded or
+kept in its separately authorised control plane before storage:
+
+- narrative, rich-text ASTs, summaries, quotes, embeddings, and model traces;
+- account IDs, authentication subjects, pseudonyms, cookies, sessions, IP
+  addresses, user agents, URLs/referrers, locale, and client timestamps;
+- screenshots, pixels, attachments, filenames, DOM data, and exact device
+  fingerprints; and
+- credentials, tokens, connection strings, SAS URLs, provider errors, or raw
+  request metadata.
+
+Checkpoint values use their own PII-free schema and exact ETag
+compare-and-swap. Processor leases are limited to 15–60 seconds and keep their
+lease token inside an opaque handle. Concurrent lease releases coalesce,
+already-lost leases complete idempotently, and renewal expiry is conservative.
+Caller cancellation only bounds that caller's observation of a release; the
+separately bounded provider call stays single-flight until settlement so a
+deadline retry cannot overlap it. Replay manifests and dead letters have fixed
+metadata shapes; they cannot carry arbitrary messages or exception details.
+Dead-letter timestamps come only from the injected server clock, never the
+caller.
+
+Storage errors contain fixed reason codes and replace every dependency cause
+with a redacted marker. The package accepts no logger and does not put packet
+values, Blob names, record IDs, ETags, lease tokens, provider messages, URLs, or
+credentials into diagnostics.
+
+These controls are defence in depth. Empty PII annotations and deterministic
+patterns cannot prove arbitrary prose safe. Packet schemas must use closed
+enums and bounded machine identifiers, while the upstream privacy scanner must
+eliminate and discard narrative before calling this package.
+
 ## Operational Hardening
 
 - Keep intake and runtime containers private. Prefer separate managed
@@ -76,6 +130,12 @@ authority.
 - Alert on integrity mismatch, immutable conflict, repeated abort/timeout,
   incomplete-marker reads, retained-partial growth, and attempts to use
   undeclared paths or URLs.
+- Keep JSON packet content, processor reports, and abuse/eligibility controls
+  in their documented separate private boundaries. Never join control-plane
+  pseudonyms into packets, manifests, checkpoints, Admin output, or MCP output.
+- Configure Blob lifecycle, versioning, soft-delete, and backup windows so
+  total retained lifetime satisfies the owning product policy. This package
+  deliberately has no delete or lifecycle-policy authority.
 - Use retention/lifecycle rules for unreachable partial candidates only after
   confirming they are not complete or catalog-referenced. Never implement
   product rollback by overwriting or deleting a published immutable version.

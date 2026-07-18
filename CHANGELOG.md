@@ -9,12 +9,14 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 - **Added**
-  - (placeholder)
+  - Add the Node-only `@plasius/storage/immutable-json-packets` entry point for schema-validated, conditionally created JSON packets, safe replay manifests and dead letters, ETag checkpoint compare-and-swap, and bounded processor leases (task #34).
 
 - **Changed**
   - Split release preparation from SHA-bound publication so npm provenance,
     the release tag, package bytes, and successful `main` CI all identify the
     same immutable commit.
+  - Extend installed-package validation to require ESM, CommonJS, and type artifacts for immutable JSON packets while denying browser resolution.
+  - Pin the build graph to the audited esbuild `0.28.1` line so tsup cannot resolve the vulnerable development-only range identified during the Epic dependency audit.
 
 - **Fixed**
   - (placeholder)
@@ -28,6 +30,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     trusted publishing, isolated dependency execution from the privileged
     production publication job, and restored the package privacy gate used by
     CD.
+  - Require fixed non-overlapping prefixes, empty schema PII audits, privacy-safe structured JSON snapshots, bounded machine-field keys, pre-enumeration sparse-array limits, deterministic sensitive-field rejection, bounded provider ETags, exact Blob/lease conflict classification, canonical SHA-256 integrity metadata, server-owned dead-letter timestamps, deadline-independent single-flight lease release, redacted dependency errors, opaque lease tokens, and URL/value-free receipts.
 
 ## [1.1.0] - 2026-07-15
 
