@@ -1,7 +1,11 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/immutable-assets.ts"],
+  entry: [
+    "src/index.ts",
+    "src/immutable-assets.ts",
+    "src/immutable-json-packets.ts",
+  ],
   dts: true,
   sourcemap: true,
   clean: true,
