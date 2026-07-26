@@ -114,6 +114,7 @@
     "node": ">=24"
   },
   "overrides": {
+    "esbuild": "$esbuild",
     "minimatch": "^10.2.1"
   }
 }
