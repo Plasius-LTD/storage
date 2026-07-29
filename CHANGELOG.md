@@ -21,6 +21,9 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 - **Security**
   - Added fail-closed source and npm-package admission for the administrative contributor registry and pinned the CI/CD runtime to Node.js 24.18.0 LTS.
+  - Moved pull-request validation to GitHub-hosted runners while retaining
+    fail-closed same-repository admission and workflow-restricted self-hosted
+    execution for protected `main`.
   - Replaced long-lived npm write-token configuration with workflow-bound OIDC
     trusted publishing, isolated dependency execution from the privileged
     production publication job, and restored the package privacy gate used by
