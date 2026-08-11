@@ -159,8 +159,10 @@ For the complete protocol and security requirements, see
 
 ```bash
 npm install
+npm run privacy:check
 npm run build
 npm test
+npm run test:privacy
 npm run typecheck
 npm run lint
 npm run test:coverage
@@ -168,13 +170,31 @@ npm run audit:all
 npm run pack:check
 ```
 
+### Private-artifact and package policy
+
+Signed contributor agreements and contributor acceptance records are retained
+in an approved access-controlled system outside source control. A
+zero-dependency policy gate inspects repository and Git-index path metadata
+only; it never opens or hashes a suspected private artifact.
+
+`privacy:check` rejects protected paths in the working tree and proposed Git
+index. `pack:check` applies the same rules to the final npm path manifest,
+requires the explicit `package.json.files` allowlist, and rejects any package
+path not present in the exact public-package allowlist. Public CLA templates
+remain distributable, but broad legal-directory entries are forbidden.
+
+CI runs the path and package gates, and release preparation and publishing fail
+closed when either policy fails. These targeted controls are defense in depth;
+they do not replace organisation-wide secret scanning, access control, or
+incident response.
+
 ## Governance
 
 - Security policy: [SECURITY.md](./SECURITY.md)
 - Code of conduct: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 - ADRs: [docs/adrs](./docs/adrs)
 - Immutable asset storage TDR: [docs/tdrs/tdr-0001-immutable-asset-storage-protocol.md](./docs/tdrs/tdr-0001-immutable-asset-storage-protocol.md)
-- Legal docs: [legal](./legal)
+- Public CLA documents: [legal/CLA.md](./legal/CLA.md)
 
 ## License
 

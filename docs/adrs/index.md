@@ -3,3 +3,4 @@
 - [ADR-0001: Standalone @plasius/storage Package Scope](./adr-0001-storage-package-scope.md)
 - [ADR-0002: Public Repository Governance Baseline](./adr-0002-public-repo-governance.md)
 - [ADR-0003: Immutable Asset Version Storage](./adr-0003-immutable-asset-version-storage.md)
+- [ADR-0004: Path-Only Private-Artifact Prevention Gates](./adr-0004-path-only-private-artifact-prevention-gates.md)

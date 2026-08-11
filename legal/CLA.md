@@ -15,7 +15,10 @@ To protect the intellectual property of this project and ensure clarity of right
 
 ## Registry
 
-All signed CLAs are logged internally in the CLA registry (`CLA-REGISTRY.csv`).
+Signed agreements and acceptance records are stored in an access-controlled
+system outside source control. They must never be committed to a repository,
+included in a package, or copied into issues, pull requests, build logs, or
+other public artifacts.
 
 ## Questions?
 

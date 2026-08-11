@@ -18,7 +18,13 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Security**
-  - (placeholder)
+  - Added zero-dependency, path-only repository and npm-package gates that
+    prevent tabular exports, contributor registries, signed CLA artifacts, and
+    privacy-marked registries from entering source control or release artifacts
+    without inspecting candidate file contents.
+  - Restricted the npm package manifest to an explicit allowlist and exact
+    public CLA documents, with the final packed path manifest checked in CI and
+    CD before publication.
 
 ## [1.1.0] - 2026-07-15
 
