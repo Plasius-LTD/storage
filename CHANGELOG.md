@@ -22,6 +22,9 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Security**
+  - Updated the development-tool dependency graph to patched
+    `brace-expansion`, `fast-uri`, and `nanoid` releases after the feedback
+    release audit.
   - Added fail-closed source and npm-package admission for the administrative contributor registry and pinned the CI/CD runtime to Node.js 24.18.0 LTS.
   - Moved pull-request validation to GitHub-hosted runners while retaining
     fail-closed same-repository admission and workflow-restricted self-hosted
