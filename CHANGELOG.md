@@ -26,7 +26,9 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     Azure-Blob type-only compatibility gate for the injected list driver.
 
 - **Fixed**
-  - (placeholder)
+  - Prevent the read-only checkout credential from shadowing the scoped
+    release-preparation GitHub App token when the protected CD workflow pushes
+    its version and changelog branch.
 
 - **Security**
   - Updated the development-tool dependency graph to patched

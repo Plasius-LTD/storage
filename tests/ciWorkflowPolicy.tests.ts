@@ -103,4 +103,16 @@ describe("release workflow trust boundaries", () => {
     expect(releasePrepareWorkflow).not.toContain("--force-with-lease");
     expect(releasePrepareWorkflow).not.toContain("secrets: inherit");
   });
+
+  it("uses only the scoped release-prep app token for repository mutation", () => {
+    const checkoutStep = releasePrepareWorkflow.slice(
+      releasePrepareWorkflow.indexOf("- name: Checkout main"),
+      releasePrepareWorkflow.indexOf("- name: Create release-prep GitHub App token"),
+    );
+
+    expect(checkoutStep).toContain("persist-credentials: false");
+    expect(releasePrepareWorkflow).toContain(
+      'git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"',
+    );
+  });
 });
