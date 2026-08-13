@@ -8,8 +8,9 @@
 [![Security Policy](https://img.shields.io/badge/security%20policy-yes-orange.svg)](./SECURITY.md)
 [![Changelog](https://img.shields.io/badge/changelog-md-blue.svg)](./CHANGELOG.md)
 
-Public package containing shared Azure storage helpers and server-side,
-immutable asset-version primitives for Plasius services.
+Public package containing shared Azure storage helpers and server-side
+immutable asset-version and schema-backed JSON packet primitives for Plasius
+services.
 
 
 ## Install
@@ -155,6 +156,148 @@ For the complete protocol and security requirements, see
 [TDR-0001](./docs/tdrs/tdr-0001-immutable-asset-storage-protocol.md), and
 [SECURITY.md](./SECURITY.md).
 
+## Immutable Schema-Backed JSON Packets
+
+The `@plasius/storage/immutable-json-packets` subpath is Node-only. It stores
+privacy-safe, structured JSON packets behind injected Azure Blob-compatible
+ports and provides coordination records for bounded processors.
+
+```ts
+import {
+  createImmutableJsonPacketStore,
+  type JsonPacketBlobContainerPort,
+} from "@plasius/storage/immutable-json-packets";
+import {
+  FeedbackBugPacketSchema,
+  FeedbackProcessorCheckpointSchema,
+} from "@plasius/schema";
+
+declare const privateFeedbackContainer: JsonPacketBlobContainerPort;
+declare const structuredPacket: unknown;
+declare const requestSignal: AbortSignal;
+
+const feedbackPackets = createImmutableJsonPacketStore({
+  container: privateFeedbackContainer,
+  kinds: {
+    bug: {
+      prefix: "feedback/bugs",
+      packetSchema: FeedbackBugPacketSchema,
+      checkpointSchema: FeedbackProcessorCheckpointSchema,
+      safeDeadLetterCodes: [
+        "CLASSIFIER_UNAVAILABLE",
+        "PACKET_SCHEMA_REJECTED",
+      ],
+    },
+  },
+  timeoutMs: 30_000,
+  maxPacketBytes: 256 * 1024,
+  maxListPageItems: 100,
+  maxListPageBytes: 4 * 1024 * 1024,
+});
+
+const receipt = await feedbackPackets.writePacket(
+  "bug",
+  "bug_01j1te5t000000000000000001",
+  structuredPacket,
+  { signal: requestSignal }
+);
+
+const page = await feedbackPackets.listPacketPage("bug", {
+  maxItems: 100,
+  maxBytes: 4 * 1024 * 1024,
+  signal: requestSignal,
+});
+const packets = await Promise.all(
+  page.packets.map(({ packetId }) =>
+    feedbackPackets.readPacket("bug", packetId, { signal: requestSignal })
+  )
+);
+```
+
+The example schema exports are supplied by the consuming application/package;
+this package accepts their structural `validate()` and `getPiiAudit()` surface.
+Schema registration fails closed unless its PII audit is empty.
+
+### Storage contract
+
+- Packet kinds select fixed, non-overlapping prefixes at store construction.
+  Individual operations cannot provide Blob paths, prefixes, URLs, containers,
+  or credentials.
+- `writePacket()` accepts a structured value only. There is deliberately no raw
+  JSON string, request body, `Buffer`, arbitrary metadata, or generic object
+  upload API.
+- Plain safe JSON is snapshotted before and after schema validation. Cycles,
+  getters, symbols, custom prototypes, sparse arrays, non-finite numbers,
+  excessive bounds, unsafe or content-shaped object keys,
+  narrative/identity/browser fields, and deterministic sensitive-value
+  patterns fail before Blob access. Array length/member bounds are checked
+  before keys are enumerated or output storage is allocated.
+- Canonical packet bytes and protocol metadata are created with
+  `If-None-Match: *`. Only Blob's precise already-exists/precondition signals
+  enter collision reconciliation; other 409 responses remain dependency
+  failures. A collision is an idempotent replay only when the entire stored
+  representation matches.
+- Receipts contain safe IDs, schema identity, SHA-256, length, ETag, and replay
+  status. They contain no packet value, Blob URL/path, credentials, or provider
+  response. Provider ETags must be bounded printable values before they can
+  enter a receipt or subsequent compare-and-swap.
+- `readPacket()` requires an exact configured kind and safe packet ID, then
+  verifies the canonical bytes, metadata, digest, ETag, envelope, and schema.
+- `listPacketPage()` asks the injected Azure-compatible `ContainerClient` for
+  exactly one bounded flat page under the kind's fixed
+  `{prefix}/packets/` root. Callers cannot provide a prefix, path, container,
+  or URL. The method validates every listed name, content type, ETag, complete
+  protocol metadata record, schema identity, digest, item count, and aggregate
+  declared-byte budget before returning sorted descriptors.
+- List results contain only safe packet IDs, schema identity, SHA-256, and byte
+  length. They never contain packet values, Blob names/URLs, provider tokens,
+  account correlation, pseudonyms, narrative, or arbitrary metadata. Payloads
+  still pass through `readPacket()` so full bytes, integrity, and the registered
+  schema are checked at the consumer boundary.
+- The optional cursor is a deterministic, bounded, opaque, kind-bound wrapper
+  around Azure's continuation. It resumes only the same bounded traversal and
+  is not a durable snapshot or an ingestion checkpoint. Processors must start a
+  fresh traversal when reconciling new or late packets and use immutable output
+  manifests/checkpoint CAS—not the list cursor—as their correctness boundary.
+
+This is the final structured storage guard, not a free-text PII detector.
+Narrative, screenshots, identity correlation, URLs, locale, and client
+timestamps must never be passed to it. Upstream services must discard
+transient narrative after deriving closed classifications.
+
+### Processor coordination
+
+- `compareAndSwapCheckpoint()` creates with `If-None-Match: *` or updates with
+  the exact prior ETag. An uncertain retry succeeds only when the current
+  canonical checkpoint is identical.
+- `acquireLease()` uses a fixed sentinel and a 15–60 second Azure lease. Its
+  returned handle can renew or release without exposing the lease token.
+  Concurrent releases coalesce, an already-lost lease is an idempotent release,
+  and renewal expiry is conservatively based on the request start. A release
+  caller's cancellation or deadline stops only that caller's wait: the bounded
+  provider release remains single-flight until it settles, so an immediate
+  retry cannot launch a second release.
+- `writeManifest()` stores only a bounded UTC window/revision and sorted packet
+  ID/digest/length facts.
+- `writeDeadLetter()` stores only a packet ID, startup-allowlisted error code,
+  package-generated canonical server timestamp, bounded attempt, and
+  retryability. The caller cannot supply the timestamp; retries with the same
+  ID and logical facts replay the first server-timestamped record.
+
+The host owns authentication, authorization, private-container and
+managed-identity configuration, feature flag `feedback.reporting.enabled`,
+processor traversal/reconciliation, retry policy, lifecycle/backup retention,
+and all PII elimination before this API. The package has no logging, delete,
+generic or caller-prefixed scan, public URL, SAS, credential-construction, or
+lifecycle-policy surface. Existing write/read-only adapters remain compatible;
+`listPacketPage()` fails closed until the injected container also supplies the
+Azure-compatible flat-list structural method.
+
+For the full decision and protocol, see
+[ADR-0004](./docs/adrs/adr-0004-immutable-schema-backed-json-packet-storage.md),
+[TDR-0002](./docs/tdrs/tdr-0002-immutable-json-packet-storage-protocol.md), and
+[SECURITY.md](./SECURITY.md).
+
 ## Development
 
 ```bash
@@ -174,6 +317,7 @@ npm run pack:check
 - Code of conduct: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 - ADRs: [docs/adrs](./docs/adrs)
 - Immutable asset storage TDR: [docs/tdrs/tdr-0001-immutable-asset-storage-protocol.md](./docs/tdrs/tdr-0001-immutable-asset-storage-protocol.md)
+- Immutable JSON packet storage TDR: [docs/tdrs/tdr-0002-immutable-json-packet-storage-protocol.md](./docs/tdrs/tdr-0002-immutable-json-packet-storage-protocol.md)
 - Legal docs: [legal](./legal)
 
 ## License

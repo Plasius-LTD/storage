@@ -38,6 +38,10 @@ async function main() {
       "dist/immutable-assets.cjs",
       "dist/immutable-assets.d.ts",
       "dist/immutable-assets.d.cts",
+      "dist/immutable-json-packets.js",
+      "dist/immutable-json-packets.cjs",
+      "dist/immutable-json-packets.d.ts",
+      "dist/immutable-json-packets.d.cts",
     ];
     const missingPaths = requiredPaths.filter((requiredPath) => !paths.includes(requiredPath));
     if (missingPaths.length > 0) {
@@ -112,6 +116,18 @@ function verifyInstalledExportMap(consumerDirectory) {
   ) {
     throw new Error("Packed immutable-assets export is not explicitly Node-only.");
   }
+  const packetExport = manifest.exports?.["./immutable-json-packets"];
+  if (
+    packetExport?.node?.import?.types !== "./dist/immutable-json-packets.d.ts" ||
+    packetExport?.node?.import?.default !== "./dist/immutable-json-packets.js" ||
+    packetExport?.node?.require?.types !== "./dist/immutable-json-packets.d.cts" ||
+    packetExport?.node?.require?.default !== "./dist/immutable-json-packets.cjs" ||
+    packetExport?.default !== null
+  ) {
+    throw new Error(
+      "Packed immutable-json-packets export is not explicitly Node-only."
+    );
+  }
 }
 
 function verifyInstalledTypeScriptBoundary(consumerDirectory) {
@@ -120,21 +136,32 @@ function verifyInstalledTypeScriptBoundary(consumerDirectory) {
     path.join(consumerDirectory, "node-consumer.mts"),
     [
       'import { createImmutableAssetStore } from "@plasius/storage/immutable-assets";',
+      'import { createImmutableJsonPacketStore } from "@plasius/storage/immutable-json-packets";',
       "void createImmutableAssetStore;",
+      "void createImmutableJsonPacketStore;",
     ].join("\n")
   );
   fs.writeFileSync(
     path.join(consumerDirectory, "node-consumer.cts"),
     [
       'import storage = require("@plasius/storage/immutable-assets");',
+      'import packets = require("@plasius/storage/immutable-json-packets");',
       "void storage.createImmutableAssetStore;",
+      "void packets.createImmutableJsonPacketStore;",
     ].join("\n")
   );
   fs.writeFileSync(
-    path.join(consumerDirectory, "browser-consumer.ts"),
+    path.join(consumerDirectory, "browser-assets-consumer.ts"),
     [
       'import { createImmutableAssetStore } from "@plasius/storage/immutable-assets";',
       "void createImmutableAssetStore;",
+    ].join("\n")
+  );
+  fs.writeFileSync(
+    path.join(consumerDirectory, "browser-packets-consumer.ts"),
+    [
+      'import { createImmutableJsonPacketStore } from "@plasius/storage/immutable-json-packets";',
+      "void createImmutableJsonPacketStore;",
     ].join("\n")
   );
 
@@ -142,58 +169,76 @@ function verifyInstalledTypeScriptBoundary(consumerDirectory) {
     compilerOptions: compilerOptions("NodeNext", "NodeNext"),
     files: ["node-consumer.mts", "node-consumer.cts"],
   });
-  const browserConfig = writeTypeScriptConfig(consumerDirectory, "tsconfig.browser.json", {
-    compilerOptions: {
-      ...compilerOptions("ESNext", "Bundler"),
-      customConditions: ["browser"],
-    },
-    files: ["browser-consumer.ts"],
-  });
-
   runTypeScriptCompiler(compilerPath, nodeConfig, consumerDirectory);
-  let browserTypesRejected = false;
-  try {
-    runTypeScriptCompiler(compilerPath, browserConfig, consumerDirectory);
-  } catch {
-    browserTypesRejected = true;
-  }
-  if (!browserTypesRejected) {
-    throw new Error("Browser TypeScript unexpectedly resolved immutable-assets.");
+  for (const [label, file] of [
+    ["immutable-assets", "browser-assets-consumer.ts"],
+    ["immutable-json-packets", "browser-packets-consumer.ts"],
+  ]) {
+    const browserConfig = writeTypeScriptConfig(
+      consumerDirectory,
+      `tsconfig.browser-${label}.json`,
+      {
+        compilerOptions: {
+          ...compilerOptions("ESNext", "Bundler"),
+          customConditions: ["browser"],
+        },
+        files: [file],
+      }
+    );
+    let browserTypesRejected = false;
+    try {
+      runTypeScriptCompiler(compilerPath, browserConfig, consumerDirectory);
+    } catch {
+      browserTypesRejected = true;
+    }
+    if (!browserTypesRejected) {
+      throw new Error(
+        `Browser TypeScript unexpectedly resolved ${label}.`
+      );
+    }
   }
 }
 
 function verifyBrowserBoundary(consumerDirectory) {
-  let browserBundleRejected = false;
-  try {
-    buildSync({
-      stdin: {
-        contents:
-          'import * as storage from "@plasius/storage/immutable-assets"; globalThis.__storage = storage;',
-        resolveDir: consumerDirectory,
-        sourcefile: "immutable-assets-browser-smoke.mjs",
-      },
-      bundle: true,
-      format: "esm",
-      logLevel: "silent",
-      platform: "browser",
-      write: false,
-    });
-  } catch {
-    browserBundleRejected = true;
-  }
-  if (!browserBundleRejected) {
-    throw new Error("Browser bundling unexpectedly resolved immutable-assets.");
+  for (const [label, entrypoint] of [
+    ["immutable-assets", "@plasius/storage/immutable-assets"],
+    ["immutable-json-packets", "@plasius/storage/immutable-json-packets"],
+  ]) {
+    let browserBundleRejected = false;
+    try {
+      buildSync({
+        stdin: {
+          contents: `import * as storage from "${entrypoint}"; globalThis.__storage = storage;`,
+          resolveDir: consumerDirectory,
+          sourcefile: `${label}-browser-smoke.mjs`,
+        },
+        bundle: true,
+        format: "esm",
+        logLevel: "silent",
+        platform: "browser",
+        write: false,
+      });
+    } catch {
+      browserBundleRejected = true;
+    }
+    if (!browserBundleRejected) {
+      throw new Error(`Browser bundling unexpectedly resolved ${label}.`);
+    }
   }
 }
 
 function verifyNodeEntrypoints(consumerDirectory) {
   const esmSmoke = `
     const storage = await import("@plasius/storage/immutable-assets");
+    const packets = await import("@plasius/storage/immutable-json-packets");
     if (typeof storage.createImmutableAssetStore !== "function") process.exit(1);
+    if (typeof packets.createImmutableJsonPacketStore !== "function") process.exit(1);
   `;
   const cjsSmoke = `
     const storage = require("@plasius/storage/immutable-assets");
+    const packets = require("@plasius/storage/immutable-json-packets");
     if (typeof storage.createImmutableAssetStore !== "function") process.exit(1);
+    if (typeof packets.createImmutableJsonPacketStore !== "function") process.exit(1);
   `;
   execFileSync(process.execPath, ["--input-type=module", "--eval", esmSmoke], {
     cwd: consumerDirectory,

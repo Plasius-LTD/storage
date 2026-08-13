@@ -5,7 +5,7 @@
   "types": "./dist/index.d.ts",
   "private": false,
   "type": "module",
-  "description": "Azure storage and immutable asset-version primitives for Plasius projects",
+  "description": "Azure storage, immutable asset-version, and schema-backed JSON packet primitives for Plasius projects",
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
@@ -31,11 +31,12 @@
   "license": "MIT",
   "dependencies": {
     "@azure/storage-file-share": "^12.32.0",
-    "@plasius/entity-manager": "^1.0.23",
-    "@plasius/schema": "^1.2.18"
+    "@plasius/entity-manager": "^1.1.0",
+    "@plasius/schema": "^1.3.1"
   },
   "devDependencies": {
     "@azure/cosmos": "^4.9.3",
+    "@azure/storage-blob": "^12.33.0",
     "@eslint/js": "^10.0.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.7.0",
@@ -71,6 +72,19 @@
         "require": {
           "types": "./dist/immutable-assets.d.cts",
           "default": "./dist/immutable-assets.cjs"
+        }
+      },
+      "default": null
+    },
+    "./immutable-json-packets": {
+      "node": {
+        "import": {
+          "types": "./dist/immutable-json-packets.d.ts",
+          "default": "./dist/immutable-json-packets.js"
+        },
+        "require": {
+          "types": "./dist/immutable-json-packets.d.cts",
+          "default": "./dist/immutable-json-packets.cjs"
         }
       },
       "default": null
@@ -115,7 +129,10 @@
     "node": ">=24"
   },
   "overrides": {
+    "brace-expansion": "^5.0.9",
     "esbuild": "$esbuild",
-    "minimatch": "^10.2.1"
+    "fast-uri": "^3.1.5",
+    "minimatch": "^10.2.1",
+    "nanoid": "^3.3.18"
   }
 }

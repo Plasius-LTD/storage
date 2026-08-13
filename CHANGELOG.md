@@ -9,17 +9,29 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 - **Added**
-  - (placeholder)
+  - Add the Node-only `@plasius/storage/immutable-json-packets` entry point for schema-validated, conditionally created JSON packets, safe replay manifests and dead letters, ETag checkpoint compare-and-swap, and bounded processor leases (task #34).
+  - Add one-page, fixed-prefix packet descriptor enumeration with opaque
+    kind-bound cursors, strict item/declared-byte/deadline limits, Azure
+    `ContainerClient` structural compatibility, and exact metadata admission so
+    scheduled materializers can discover packets without a generic Blob scan.
 
 - **Changed**
   - Split release preparation from SHA-bound publication so npm provenance,
     the release tag, package bytes, and successful `main` CI all identify the
     same immutable commit.
+  - Extend installed-package validation to require ESM, CommonJS, and type artifacts for immutable JSON packets while denying browser resolution.
+  - Pin the build graph to the audited esbuild `0.28.1` line so tsup cannot resolve the vulnerable development-only range identified during the Epic dependency audit.
+  - Consume the published compatible `@plasius/schema` 1.4.x and
+    `@plasius/entity-manager` 1.1.x lines without source pins, and add an
+    Azure-Blob type-only compatibility gate for the injected list driver.
 
 - **Fixed**
   - (placeholder)
 
 - **Security**
+  - Updated the development-tool dependency graph to patched
+    `brace-expansion`, `fast-uri`, and `nanoid` releases after the feedback
+    release audit.
   - Added fail-closed source and npm-package admission for the administrative contributor registry and pinned the CI/CD runtime to Node.js 24.18.0 LTS.
   - Moved pull-request validation to GitHub-hosted runners while retaining
     fail-closed same-repository admission and workflow-restricted self-hosted
@@ -28,6 +40,11 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     trusted publishing, isolated dependency execution from the privileged
     production publication job, and restored the package privacy gate used by
     CD.
+  - Require fixed non-overlapping prefixes, empty schema PII audits, privacy-safe structured JSON snapshots, bounded machine-field keys, pre-enumeration sparse-array limits, deterministic sensitive-field rejection, bounded provider ETags, exact Blob/lease conflict classification, canonical SHA-256 integrity metadata, server-owned dead-letter timestamps, deadline-independent single-flight lease release, redacted dependency errors, opaque lease tokens, and URL/value-free receipts.
+  - Ensure packet listing cannot accept a dynamic prefix or expose Blob names,
+    values, provider continuations, identity/correlation fields, or arbitrary
+    metadata; malformed, oversized, duplicate, cross-kind, and non-progressing
+    pages fail closed with value-free diagnostics.
 
 ## [1.1.0] - 2026-07-15
 
