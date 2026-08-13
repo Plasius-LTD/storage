@@ -9,6 +9,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 - **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.2.0] - 2026-08-13
+
+- **Added**
   - Add the Node-only `@plasius/storage/immutable-json-packets` entry point for schema-validated, conditionally created JSON packets, safe replay manifests and dead letters, ETag checkpoint compare-and-swap, and bounded processor leases (task #34).
   - Add one-page, fixed-prefix packet descriptor enumeration with opaque
     kind-bound cursors, strict item/declared-byte/deadline limits, Azure
@@ -306,7 +320,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.2.0...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -338,3 +352,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.0.18]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.18
 [1.0.19]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.19
 [1.1.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.1.0
+[1.2.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.2.0
