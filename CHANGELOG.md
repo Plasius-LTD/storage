@@ -29,6 +29,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - Prevent the read-only checkout credential from shadowing the scoped
     release-preparation GitHub App token when the protected CD workflow pushes
     its version and changelog branch.
+  - Correct the embedded pre-release identity JavaScript terminator and verify
+    every embedded release-preparation script parses before publication.
 
 - **Security**
   - Updated the development-tool dependency graph to patched
