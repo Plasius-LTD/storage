@@ -21,8 +21,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     same immutable commit.
   - Extend installed-package validation to require ESM, CommonJS, and type artifacts for immutable JSON packets while denying browser resolution.
   - Pin the build graph to the audited esbuild `0.28.1` line so tsup cannot resolve the vulnerable development-only range identified during the Epic dependency audit.
-  - Consume the latest published compatible `@plasius/schema` 1.3.x and
-    `@plasius/entity-manager` 1.0.x lines without source pins, and add an
+  - Consume the published compatible `@plasius/schema` 1.4.x and
+    `@plasius/entity-manager` 1.1.x lines without source pins, and add an
     Azure-Blob type-only compatibility gate for the injected list driver.
 
 - **Fixed**
