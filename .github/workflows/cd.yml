@@ -658,7 +658,10 @@ jobs:
             exit 1
           fi
 
-          if ! tar -tzf "${TARBALL}" | grep -Eq '^package/dist(/|$)'; then
+          if ! tar -tzf "${TARBALL}" | awk '
+            /^package\/dist(\/|$)/ { found = 1 }
+            END { exit(found ? 0 : 1) }
+          '; then
             echo "Package tarball is missing built dist output." >&2
             exit 1
           fi

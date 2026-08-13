@@ -15,7 +15,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
-  - (placeholder)
+  - Consume the complete package tar listing when checking for built output so
+    `pipefail` cannot mistake a successful early match for a failed archive.
 
 - **Security**
   - (placeholder)
