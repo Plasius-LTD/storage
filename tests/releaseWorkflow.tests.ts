@@ -72,6 +72,22 @@ describe("release snapshot selection", () => {
     );
   });
 
+  it("keeps every embedded release-preparation JavaScript block syntactically valid", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/release-prepare.yml", import.meta.url),
+      "utf8"
+    );
+    const scripts = Array.from(
+      workflow.matchAll(/node -e '\n([\s\S]*?)\n\s*'(?=[\s)]|$)/gu),
+      (match) => match[1]
+    );
+
+    expect(scripts).toHaveLength(3);
+    for (const script of scripts) {
+      expect(() => new Function("require", "process", script)).not.toThrow();
+    }
+  });
+
   it("rejects a moved remote ref while retaining immutable Git-object reads", async () => {
     const repository = await mkdtemp(join(tmpdir(), "storage-release-"));
     temporaryDirectories.push(repository);
