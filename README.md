@@ -191,6 +191,8 @@ const feedbackPackets = createImmutableJsonPacketStore({
   },
   timeoutMs: 30_000,
   maxPacketBytes: 256 * 1024,
+  maxListPageItems: 100,
+  maxListPageBytes: 4 * 1024 * 1024,
 });
 
 const receipt = await feedbackPackets.writePacket(
@@ -198,6 +200,17 @@ const receipt = await feedbackPackets.writePacket(
   "bug_01j1te5t000000000000000001",
   structuredPacket,
   { signal: requestSignal }
+);
+
+const page = await feedbackPackets.listPacketPage("bug", {
+  maxItems: 100,
+  maxBytes: 4 * 1024 * 1024,
+  signal: requestSignal,
+});
+const packets = await Promise.all(
+  page.packets.map(({ packetId }) =>
+    feedbackPackets.readPacket("bug", packetId, { signal: requestSignal })
+  )
 );
 ```
 
@@ -230,6 +243,22 @@ Schema registration fails closed unless its PII audit is empty.
   enter a receipt or subsequent compare-and-swap.
 - `readPacket()` requires an exact configured kind and safe packet ID, then
   verifies the canonical bytes, metadata, digest, ETag, envelope, and schema.
+- `listPacketPage()` asks the injected Azure-compatible `ContainerClient` for
+  exactly one bounded flat page under the kind's fixed
+  `{prefix}/packets/` root. Callers cannot provide a prefix, path, container,
+  or URL. The method validates every listed name, content type, ETag, complete
+  protocol metadata record, schema identity, digest, item count, and aggregate
+  declared-byte budget before returning sorted descriptors.
+- List results contain only safe packet IDs, schema identity, SHA-256, and byte
+  length. They never contain packet values, Blob names/URLs, provider tokens,
+  account correlation, pseudonyms, narrative, or arbitrary metadata. Payloads
+  still pass through `readPacket()` so full bytes, integrity, and the registered
+  schema are checked at the consumer boundary.
+- The optional cursor is a deterministic, bounded, opaque, kind-bound wrapper
+  around Azure's continuation. It resumes only the same bounded traversal and
+  is not a durable snapshot or an ingestion checkpoint. Processors must start a
+  fresh traversal when reconciling new or late packets and use immutable output
+  manifests/checkpoint CAS—not the list cursor—as their correctness boundary.
 
 This is the final structured storage guard, not a free-text PII detector.
 Narrative, screenshots, identity correlation, URLs, locale, and client
@@ -257,9 +286,12 @@ transient narrative after deriving closed classifications.
 
 The host owns authentication, authorization, private-container and
 managed-identity configuration, feature flag `feedback.reporting.enabled`,
-processor retry policy, lifecycle/backup retention, and all PII elimination
-before this API. The package has no logging, delete, list, public URL, SAS,
-credential-construction, or lifecycle-policy surface.
+processor traversal/reconciliation, retry policy, lifecycle/backup retention,
+and all PII elimination before this API. The package has no logging, delete,
+generic or caller-prefixed scan, public URL, SAS, credential-construction, or
+lifecycle-policy surface. Existing write/read-only adapters remain compatible;
+`listPacketPage()` fails closed until the injected container also supplies the
+Azure-compatible flat-list structural method.
 
 For the full decision and protocol, see
 [ADR-0004](./docs/adrs/adr-0004-immutable-schema-backed-json-packet-storage.md),

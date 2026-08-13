@@ -1,6 +1,7 @@
 # TDR-0002: Immutable JSON Packet Storage Protocol
 
 - Date: 2026-07-18
+- Last updated: 2026-08-13
 - Status: Accepted
 - Package entry point: `@plasius/storage/immutable-json-packets`
 - Tracked work: [Storage Task #34](https://github.com/Plasius-LTD/storage/issues/34)
@@ -80,6 +81,41 @@ verify content type, ETag, canonical bytes, digest, and complete protocol
 metadata, then revalidate the payload schema. Receipts omit paths, URLs, values,
 and provider diagnostics. ETags obtained from the provider must be bounded
 printable values and cannot be wildcard conditions.
+
+## Bounded Packet Enumeration Protocol
+
+`listPacketPage(kind, options)` performs one Azure flat-list page under only
+the registered kind's fixed `{prefix}/packets/` root. The caller has no prefix,
+path, container, URL, or generic list parameter. The injected container port is
+structurally assignable from Azure's managed-identity-capable
+`ContainerClient`; the package never constructs or accepts credentials. Hosts
+that do not supply the optional flat-list method retain existing write/read
+behavior, while enumeration fails closed as invalid configuration.
+
+Every call has configured ceilings for page items and aggregate declared bytes;
+a call may reduce but never increase them. It also inherits the operation's
+bounded deadline and cancellation signal. Exactly one provider page is
+consumed. A provider response over the requested item limit, over the byte
+limit, or outside the fixed prefix is rejected before any descriptor is
+returned.
+
+Each item must have an exact `{packetId}.json` suffix and complete matching
+protocol metadata: storage schema, packet kind/type/ID, registered payload
+schema identity/version, SHA-256, byte length, content type, and bounded ETag.
+Names, metadata, duplicates, and provider continuations that are malformed or
+non-progressing fail closed. Returned descriptors are frozen, sorted, and
+limited to packet ID, schema identity, digest, and byte length. They contain no
+payload, Blob name/path/URL, ETag, provider token, account/pseudonym, narrative,
+or arbitrary metadata.
+
+The provider continuation is wrapped in a canonical base64url cursor bound to
+the configured kind and prefix. Both provider and encoded forms have byte and
+control-character limits. The cursor is an opaque traversal aid, not a
+credential or durable storage snapshot. It must not be logged or persisted as
+the processor's correctness checkpoint. A processor uses it only to finish a
+bounded pass, starts a fresh pass to discover new/late packets, calls
+`readPacket()` for canonical bytes and schema validation, and commits durable
+window state only after immutable output/manifests exist.
 
 ## Immutable Write Protocol
 
@@ -170,7 +206,8 @@ Blob access must remain disabled.
 
 Lifecycle rules, versioning, soft delete, and backups must be configured so
 the total retained lifetime meets the owning product policy. This package has
-no delete, list, credential-construction, public URL, or lifecycle-policy API.
+no delete, generic/caller-prefixed scan, credential-construction, public URL,
+or lifecycle-policy API.
 
 ## Validation Obligations
 
@@ -181,6 +218,9 @@ Release validation covers:
 - hostile object keys and pre-enumeration sparse-array length bounds;
 - conditional create replay and immutable conflicts;
 - corrupt bytes and metadata;
+- fixed-prefix list enforcement, item/byte/cursor/deadline bounds, provider-page
+  corruption, non-progressing traversal, descriptor minimisation, and
+  `ContainerClient` structural compatibility;
 - bounded ETag create/update/replay/conflict races and unrelated 409 failures;
 - bounded manifest and dead-letter inputs;
 - lease duration, contention, conservative renewal, concurrent/uncertain

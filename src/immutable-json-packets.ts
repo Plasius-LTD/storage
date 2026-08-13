@@ -9,7 +9,12 @@ const MAX_OPERATION_TIMEOUT_MS = 300_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_PACKET_BYTES = 256 * 1024;
 const DEFAULT_MAX_READ_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_LIST_PAGE_ITEMS = 100;
+const DEFAULT_MAX_LIST_PAGE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_MANIFEST_ENTRIES = 10_000;
+const MAX_LIST_PAGE_ITEMS = 1_000;
+const MAX_PROVIDER_CONTINUATION_BYTES = 4 * 1024;
+const MAX_ENCODED_CURSOR_BYTES = 8 * 1024;
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_MEMBERS = 10_000;
 const MAX_JSON_STRING_BYTES = 1_024;
@@ -64,6 +69,45 @@ export interface JsonPacketBlobDownloadResponsePort {
   readonly etag?: string;
 }
 
+/** Structural subset of Azure Blob list options used by the packet store. */
+export interface JsonPacketBlobListOptions {
+  readonly abortSignal?: AbortSignal;
+  readonly includeMetadata: true;
+  readonly prefix: string;
+}
+
+/** Structural subset of Azure page settings used by the packet store. */
+export interface JsonPacketBlobPageSettings {
+  readonly continuationToken?: string;
+  readonly maxPageSize?: number;
+}
+
+/** Structural subset of an Azure Blob item returned by flat listing. */
+export interface JsonPacketBlobListItemPort {
+  readonly name: string;
+  readonly metadata?: Readonly<Record<string, string>>;
+  readonly properties: {
+    readonly contentLength?: number;
+    readonly contentType?: string;
+    readonly etag?: string;
+  };
+}
+
+/** Structural subset of one Azure flat-list page. */
+export interface JsonPacketBlobListPagePort {
+  readonly continuationToken?: string;
+  readonly segment: {
+    readonly blobItems: readonly JsonPacketBlobListItemPort[];
+  };
+}
+
+/** Structural subset of Azure's paged flat-list iterator. */
+export interface JsonPacketBlobListIteratorPort {
+  byPage(
+    settings?: JsonPacketBlobPageSettings
+  ): AsyncIterable<JsonPacketBlobListPagePort>;
+}
+
 export type JsonPacketBlobConditions =
   | {
       readonly ifNoneMatch: "*";
@@ -113,6 +157,14 @@ export interface JsonPacketBlobClientPort {
 /** Structural subset of an Azure ContainerClient used by this entry point. */
 export interface JsonPacketBlobContainerPort {
   getBlockBlobClient(blobName: string): JsonPacketBlobClientPort;
+  /**
+   * Optional to preserve write/read compatibility for existing hosts. Listing
+   * fails closed unless the injected private, managed-identity-capable
+   * ContainerClient exposes this Azure-compatible structural method.
+   */
+  listBlobsFlat?(
+    options: JsonPacketBlobListOptions
+  ): JsonPacketBlobListIteratorPort;
 }
 
 export interface ImmutableJsonPacketKindConfig<T = unknown> {
@@ -133,6 +185,8 @@ export interface CreateImmutableJsonPacketStoreOptions<
   readonly timeoutMs?: number;
   readonly maxPacketBytes?: number;
   readonly maxReadBytes?: number;
+  readonly maxListPageItems?: number;
+  readonly maxListPageBytes?: number;
   readonly maxManifestEntries?: number;
   /** Server clock injection for deterministic tests; packet payloads never supply it. */
   readonly clock?: () => Date;
@@ -141,6 +195,16 @@ export interface CreateImmutableJsonPacketStoreOptions<
 export interface ImmutableJsonPacketOperationOptions {
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+}
+
+export interface ImmutableJsonPacketListOptions
+  extends ImmutableJsonPacketOperationOptions {
+  /** Opaque, kind-bound cursor returned by the preceding page. */
+  readonly cursor?: string;
+  /** Per-call item ceiling; it may only reduce the configured ceiling. */
+  readonly maxItems?: number;
+  /** Per-call declared-byte ceiling; it may only reduce the configured ceiling. */
+  readonly maxBytes?: number;
 }
 
 export type ImmutableJsonPacketStorageErrorCode =
@@ -161,6 +225,7 @@ export type ImmutableJsonPacketStorageErrorCode =
 
 export type ImmutableJsonPacketStorageOperation =
   | "acquire-lease"
+  | "list-packets"
   | "read-checkpoint"
   | "read-packet"
   | "release-lease"
@@ -219,6 +284,22 @@ export interface ImmutableJsonPacketReceipt
   extends ImmutableJsonRecordReceipt {
   readonly recordType: "packet";
   readonly packetId: string;
+}
+
+export interface ImmutableJsonPacketListEntry {
+  readonly packetId: string;
+  readonly schemaId: string;
+  readonly schemaVersion: string;
+  readonly sha256: string;
+  readonly byteLength: number;
+}
+
+export interface ImmutableJsonPacketPage {
+  readonly kind: string;
+  readonly packets: readonly ImmutableJsonPacketListEntry[];
+  readonly byteLength: number;
+  readonly complete: boolean;
+  readonly nextCursor?: string;
 }
 
 export interface ImmutableJsonManifestPacket {
@@ -285,6 +366,10 @@ export interface ImmutableJsonPacketStore<K extends string = string> {
     packetId: string,
     options?: ImmutableJsonPacketOperationOptions
   ): Promise<SafeJsonValue>;
+  listPacketPage(
+    kind: K,
+    options?: ImmutableJsonPacketListOptions
+  ): Promise<ImmutableJsonPacketPage>;
   writeManifest(
     kind: K,
     manifestId: string,
@@ -338,6 +423,8 @@ interface ResolvedStoreConfig {
   readonly kinds: ReadonlyMap<string, ResolvedKind>;
   readonly timeoutMs: number;
   readonly maxReadBytes: number;
+  readonly maxListPageItems: number;
+  readonly maxListPageBytes: number;
   readonly maxManifestEntries: number;
   readonly clock: () => Date;
 }
@@ -373,6 +460,18 @@ const SAFE_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{2,63}$/u;
 const ETAG_PATTERN = /^[\x20-\x7e]{1,256}$/u;
 const SAFE_JSON_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/u;
 const LEASE_TOKEN_PATTERN = /^[\x20-\x7e]{1,256}$/u;
+const BASE64URL_CURSOR_PATTERN = /^[A-Za-z0-9_-]+$/u;
+const DECIMAL_BYTE_LENGTH_PATTERN = /^(?:0|[1-9][0-9]{0,8})$/u;
+const PACKET_LIST_METADATA_KEYS = [
+  "plasiusbytelength",
+  "plasiuskind",
+  "plasiusrecordid",
+  "plasiusrecordschema",
+  "plasiusrecordtype",
+  "plasiusschemaid",
+  "plasiusschemaversion",
+  "plasiussha256",
+] as const;
 const FORBIDDEN_PREFIX_SEGMENTS = new Set([
   ".",
   "..",
@@ -719,6 +818,105 @@ function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function packetListCursorScope(kind: string, prefix: string): string {
+  return sha256(encoder.encode(`packet-list\u0000${kind}\u0000${prefix}`));
+}
+
+function hasCursorControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) as number;
+    if (codePoint < 32 || codePoint === 127) return true;
+  }
+  return false;
+}
+
+function validProviderContinuation(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_PROVIDER_CONTINUATION_BYTES &&
+    Buffer.byteLength(value, "utf8") <= MAX_PROVIDER_CONTINUATION_BYTES &&
+    !hasCursorControlCharacter(value)
+  );
+}
+
+function encodePacketListCursor(
+  kind: string,
+  prefix: string,
+  continuationToken: unknown
+): string {
+  if (!validProviderContinuation(continuationToken)) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned an invalid packet-list continuation.",
+      "list-packets",
+      { kind, recordType: "packet" }
+    );
+  }
+  const encoded = Buffer.from(
+    JSON.stringify({
+      continuation: continuationToken,
+      scope: packetListCursorScope(kind, prefix),
+      version: 1,
+    }),
+    "utf8"
+  ).toString("base64url");
+  if (Buffer.byteLength(encoded, "ascii") > MAX_ENCODED_CURSOR_BYTES) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned an invalid packet-list continuation.",
+      "list-packets",
+      { kind, recordType: "packet" }
+    );
+  }
+  return encoded;
+}
+
+function decodePacketListCursor(
+  kind: string,
+  prefix: string,
+  cursor: unknown
+): string | undefined {
+  if (cursor === undefined) return undefined;
+  if (
+    typeof cursor !== "string" ||
+    cursor.length === 0 ||
+    cursor.length > MAX_ENCODED_CURSOR_BYTES ||
+    Buffer.byteLength(cursor, "ascii") > MAX_ENCODED_CURSOR_BYTES ||
+    !BASE64URL_CURSOR_PATTERN.test(cursor)
+  ) {
+    fail("INVALID_ARGUMENT", "The packet-list cursor is invalid.", "list-packets", {
+      kind,
+      recordType: "packet",
+    });
+  }
+
+  let decoded: unknown;
+  try {
+    const bytes = Buffer.from(cursor, "base64url");
+    if (bytes.toString("base64url") !== cursor) throw new Error("non-canonical");
+    decoded = JSON.parse(decoder.decode(bytes));
+  } catch {
+    fail("INVALID_ARGUMENT", "The packet-list cursor is invalid.", "list-packets", {
+      kind,
+      recordType: "packet",
+    });
+  }
+  if (
+    !isRecord(decoded) ||
+    !hasExactKeys(decoded, ["continuation", "scope", "version"]) ||
+    decoded.version !== 1 ||
+    decoded.scope !== packetListCursorScope(kind, prefix) ||
+    !validProviderContinuation(decoded.continuation)
+  ) {
+    fail("INVALID_ARGUMENT", "The packet-list cursor is invalid.", "list-packets", {
+      kind,
+      recordType: "packet",
+    });
+  }
+  return decoded.continuation;
+}
+
 function exactBytesEqual(left: Uint8Array, right: Uint8Array): boolean {
   if (left.byteLength !== right.byteLength) return false;
   return timingSafeEqual(Buffer.from(left), Buffer.from(right));
@@ -755,6 +953,29 @@ function resolveTimeout(
     fail("INVALID_ARGUMENT", "timeoutMs is outside its supported bounds.", operation);
   }
   return timeout;
+}
+
+function resolvePacketListLimit(
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+  label: "maxBytes" | "maxItems",
+  kind: string
+): number {
+  const resolved = value ?? fallback;
+  if (
+    !Number.isSafeInteger(resolved) ||
+    resolved < 1 ||
+    resolved > maximum
+  ) {
+    fail(
+      "INVALID_ARGUMENT",
+      `${label} is outside the configured packet-list bounds.`,
+      "list-packets",
+      { kind, recordType: "packet" }
+    );
+  }
+  return resolved;
 }
 
 function resolveSchema(
@@ -1077,10 +1298,24 @@ function normalizeMetadata(
     });
   }
   const output = Object.create(null) as Record<string, string>;
-  for (const [key, value] of Object.entries(metadata)) {
+  const entries = Object.entries(metadata);
+  if (entries.length > 32) {
+    fail("CORRUPT_RECORD", "The JSON record has invalid integrity metadata.", operation, {
+      kind,
+    });
+  }
+  for (const [key, value] of entries) {
+    if (key.length > 128) {
+      fail("CORRUPT_RECORD", "The JSON record has invalid integrity metadata.", operation, {
+        kind,
+      });
+    }
     const normalized = key.toLowerCase();
     if (
       typeof value !== "string" ||
+      !/^[a-z0-9]{1,128}$/u.test(normalized) ||
+      Buffer.byteLength(value, "utf8") > 1_024 ||
+      hasCursorControlCharacter(value) ||
       Object.prototype.hasOwnProperty.call(output, normalized)
     ) {
       fail("CORRUPT_RECORD", "The JSON record has invalid integrity metadata.", operation, {
@@ -1090,6 +1325,119 @@ function normalizeMetadata(
     output[normalized] = value;
   }
   return Object.freeze(output);
+}
+
+function packetListEntry(
+  kind: ResolvedKind,
+  item: unknown
+): ImmutableJsonPacketListEntry {
+  const packetPrefix = `${kind.prefix}/packets/`;
+  if (!isRecord(item) || typeof item.name !== "string") {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned an invalid packet-list item.",
+      "list-packets",
+      { kind: kind.kind, recordType: "packet" }
+    );
+  }
+  if (
+    item.name.length > packetPrefix.length + 133 ||
+    Buffer.byteLength(item.name, "utf8") > packetPrefix.length + 133
+  ) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned an invalid packet-list item.",
+      "list-packets",
+      { kind: kind.kind, recordType: "packet" }
+    );
+  }
+  const suffix = item.name.startsWith(packetPrefix)
+    ? item.name.slice(packetPrefix.length)
+    : "";
+  const packetId = suffix.endsWith(".json")
+    ? suffix.slice(0, -".json".length)
+    : "";
+  if (
+    !IDENTIFIER_PATTERN.test(packetId) ||
+    suffix !== `${packetId}.json`
+  ) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned an invalid packet-list item.",
+      "list-packets",
+      { kind: kind.kind, recordType: "packet" }
+    );
+  }
+  if (!isRecord(item.properties)) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned invalid packet-list properties.",
+      "list-packets",
+      { kind: kind.kind, recordType: "packet" }
+    );
+  }
+  const contentLength = item.properties.contentLength;
+  if (
+    !Number.isSafeInteger(contentLength) ||
+    (contentLength as number) < 1 ||
+    (contentLength as number) > kind.maxPacketBytes ||
+    item.properties.contentType !== IMMUTABLE_JSON_PACKET_CONTENT_TYPE
+  ) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned invalid packet-list properties.",
+      "list-packets",
+      { kind: kind.kind, recordType: "packet" }
+    );
+  }
+  providerEtag(
+    item.properties.etag,
+    "list-packets",
+    kind.kind,
+    "download",
+    "packet"
+  );
+  const metadata = normalizeMetadata(
+    isRecord(item.metadata)
+      ? (item.metadata as Readonly<Record<string, string>>)
+      : undefined,
+    "list-packets",
+    kind.kind
+  );
+  if (!hasExactKeys(metadata, PACKET_LIST_METADATA_KEYS)) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned invalid packet-list metadata.",
+      "list-packets",
+      { kind: kind.kind, recordType: "packet" }
+    );
+  }
+  const declaredLength = metadata.plasiusbytelength;
+  if (
+    !DECIMAL_BYTE_LENGTH_PATTERN.test(declaredLength) ||
+    Number(declaredLength) !== contentLength ||
+    metadata.plasiuskind !== kind.kind ||
+    metadata.plasiusrecordid !== packetId ||
+    metadata.plasiusrecordschema !== IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA ||
+    metadata.plasiusrecordtype !== "packet" ||
+    metadata.plasiusschemaid !== kind.packetSchema.id ||
+    metadata.plasiusschemaversion !== kind.packetSchema.version ||
+    !SHA256_PATTERN.test(metadata.plasiussha256)
+  ) {
+    fail(
+      "CORRUPT_RECORD",
+      "Blob storage returned invalid packet-list metadata.",
+      "list-packets",
+      { kind: kind.kind, recordType: "packet" }
+    );
+  }
+  return Object.freeze({
+    packetId,
+    schemaId: kind.packetSchema.id,
+    schemaVersion: kind.packetSchema.version,
+    sha256: metadata.plasiussha256,
+    byteLength: contentLength as number,
+  });
 }
 
 async function downloadRecord(
@@ -1495,6 +1843,18 @@ function resolveStoreConfig(
   if (maxReadBytes < defaultMaxPacketBytes) {
     fail("INVALID_CONFIG", "maxReadBytes must cover maxPacketBytes.", "write-packet");
   }
+  const maxListPageItems = resolvePositiveInteger(
+    options.maxListPageItems,
+    DEFAULT_MAX_LIST_PAGE_ITEMS,
+    "maxListPageItems",
+    MAX_LIST_PAGE_ITEMS
+  );
+  const maxListPageBytes = resolvePositiveInteger(
+    options.maxListPageBytes,
+    Math.min(DEFAULT_MAX_LIST_PAGE_BYTES, maxReadBytes),
+    "maxListPageBytes",
+    maxReadBytes
+  );
   const maxManifestEntries = resolvePositiveInteger(
     options.maxManifestEntries,
     DEFAULT_MAX_MANIFEST_ENTRIES,
@@ -1566,6 +1926,8 @@ function resolveStoreConfig(
     kinds,
     timeoutMs,
     maxReadBytes,
+    maxListPageItems,
+    maxListPageBytes,
     maxManifestEntries,
     clock,
   });
@@ -1746,6 +2108,184 @@ export function createImmutableJsonPacketStore<
             parsed.payload,
             "read-packet"
           );
+        }
+      );
+    },
+
+    listPacketPage: async (kindInput, operationOptions = {}) => {
+      const kind = kindFor(config, kindInput, "list-packets");
+      const maxItems = resolvePacketListLimit(
+        operationOptions.maxItems,
+        config.maxListPageItems,
+        config.maxListPageItems,
+        "maxItems",
+        kind.kind
+      );
+      const maxBytes = resolvePacketListLimit(
+        operationOptions.maxBytes,
+        config.maxListPageBytes,
+        config.maxListPageBytes,
+        "maxBytes",
+        kind.kind
+      );
+      const continuationToken = decodePacketListCursor(
+        kind.kind,
+        kind.prefix,
+        operationOptions.cursor
+      );
+      const listBlobsFlat = config.container.listBlobsFlat?.bind(
+        config.container
+      );
+      if (!listBlobsFlat) {
+        fail(
+          "INVALID_CONFIG",
+          "The packet-list Blob driver is not configured.",
+          "list-packets",
+          { kind: kind.kind, recordType: "packet" }
+        );
+      }
+
+      return withContext(
+        "list-packets",
+        kind.kind,
+        resolveTimeout(
+          operationOptions.timeoutMs,
+          config.timeoutMs,
+          "list-packets"
+        ),
+        operationOptions.signal,
+        async (context) => {
+          let iteration: IteratorResult<JsonPacketBlobListPagePort>;
+          try {
+            const listing = listBlobsFlat({
+              abortSignal: context.signal,
+              includeMetadata: true,
+              prefix: `${kind.prefix}/packets/`,
+            });
+            if (!listing || typeof listing.byPage !== "function") {
+              throw new Error("invalid-list-driver");
+            }
+            const pages = listing.byPage({
+              ...(continuationToken === undefined
+                ? {}
+                : { continuationToken }),
+              maxPageSize: maxItems,
+            });
+            if (
+              !pages ||
+              typeof pages[Symbol.asyncIterator] !== "function"
+            ) {
+              throw new Error("invalid-list-driver");
+            }
+            const iterator = pages[Symbol.asyncIterator]();
+            iteration = await context.race(Promise.resolve(iterator.next()));
+          } catch (error) {
+            if (error instanceof ImmutableJsonPacketStorageError) throw error;
+            throw asStorageFailure(
+              error,
+              "list-packets",
+              kind.kind,
+              "packet"
+            );
+          }
+
+          if (iteration.done === true) {
+            return Object.freeze({
+              kind: kind.kind,
+              packets: Object.freeze([]) as readonly ImmutableJsonPacketListEntry[],
+              byteLength: 0,
+              complete: true,
+            });
+          }
+          context.throwIfAborted();
+          const page = iteration.value;
+          if (
+            !isRecord(page) ||
+            !isRecord(page.segment) ||
+            !Array.isArray(page.segment.blobItems)
+          ) {
+            fail(
+              "CORRUPT_RECORD",
+              "Blob storage returned an invalid packet-list page.",
+              "list-packets",
+              { kind: kind.kind, recordType: "packet" }
+            );
+          }
+          const blobItems = page.segment.blobItems as readonly unknown[];
+          if (blobItems.length > maxItems) {
+            fail(
+              "LIMIT_EXCEEDED",
+              "The packet-list page exceeds its item limit.",
+              "list-packets",
+              { kind: kind.kind, recordType: "packet" }
+            );
+          }
+
+          const nextProviderToken = page.continuationToken;
+          if (
+            nextProviderToken !== undefined &&
+            (!validProviderContinuation(nextProviderToken) ||
+              nextProviderToken === continuationToken ||
+              blobItems.length === 0)
+          ) {
+            fail(
+              "CORRUPT_RECORD",
+              "Blob storage returned an invalid packet-list continuation.",
+              "list-packets",
+              { kind: kind.kind, recordType: "packet" }
+            );
+          }
+
+          const packetIds = new Set<string>();
+          let byteLength = 0;
+          const packets = blobItems.map((item) => {
+            context.throwIfAborted();
+            const entry = packetListEntry(kind, item);
+            if (packetIds.has(entry.packetId)) {
+              fail(
+                "CORRUPT_RECORD",
+                "Blob storage returned a duplicate packet-list item.",
+                "list-packets",
+                { kind: kind.kind, recordType: "packet" }
+              );
+            }
+            packetIds.add(entry.packetId);
+            if (
+              entry.byteLength > maxBytes - byteLength ||
+              !Number.isSafeInteger(byteLength + entry.byteLength)
+            ) {
+              fail(
+                "LIMIT_EXCEEDED",
+                "The packet-list page exceeds its declared-byte limit.",
+                "list-packets",
+                { kind: kind.kind, recordType: "packet" }
+              );
+            }
+            byteLength += entry.byteLength;
+            return entry;
+          });
+          packets.sort((left, right) =>
+            left.packetId < right.packetId
+              ? -1
+              : left.packetId > right.packetId
+                ? 1
+                : 0
+          );
+          const nextCursor =
+            nextProviderToken === undefined
+              ? undefined
+              : encodePacketListCursor(
+                  kind.kind,
+                  kind.prefix,
+                  nextProviderToken
+                );
+          return Object.freeze({
+            kind: kind.kind,
+            packets: Object.freeze(packets),
+            byteLength,
+            complete: nextCursor === undefined,
+            ...(nextCursor === undefined ? {} : { nextCursor }),
+          });
         }
       );
     },

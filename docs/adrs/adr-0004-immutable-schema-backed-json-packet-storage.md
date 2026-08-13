@@ -1,6 +1,7 @@
 # ADR-0004: Immutable Schema-Backed JSON Packet Storage
 
 - Date: 2026-07-18
+- Last updated: 2026-08-13
 - Status: Accepted
 - Tracked work: [Storage Task #34](https://github.com/Plasius-LTD/storage/issues/34)
 - Parent story: [Feedback Reporting Story #1667](https://github.com/Plasius-LTD/plasius-ltd-site/issues/1667)
@@ -16,7 +17,9 @@ account subjects, pseudonyms, network identifiers, or provider error text.
 The processors also need safe coordination primitives. Immutable packets must
 survive idempotent retries, checkpoints must use compare-and-swap, concurrent
 processors need bounded leases, and replay manifests and dead-letter records
-must contain only safe, fixed metadata.
+must contain only safe, fixed metadata. Hourly and daily processors also need
+to discover immutable packets, but accepting a caller-selected prefix or
+returning Blob names would turn the boundary into a general storage scanner.
 
 Azure Blob Storage provides conditional writes, ETags, and leases, but those
 primitives do not provide schema admission, canonical JSON, privacy-aware
@@ -33,7 +36,8 @@ The host constructs one store with:
 - a fixed, non-overlapping prefix for every registered packet kind;
 - an `@plasius/schema`-compatible packet schema and optional checkpoint schema;
 - a closed allowlist of dead-letter reason codes; and
-- byte, read, manifest-entry, and operation-deadline bounds.
+- byte, read, list-page item/byte, manifest-entry, and operation-deadline
+  bounds.
 
 The entry point accepts structured values only. It exposes no method that
 accepts a raw body, JSON string, byte buffer, Blob name, URL, connection string,
@@ -91,11 +95,26 @@ All errors expose fixed diagnostics. Underlying causes are replaced with
 `{ redacted: true }`; packet values, record IDs, Blob names, and provider
 messages are not copied into diagnostics.
 
+`listPacketPage()` is the sole enumeration surface. It always supplies the
+registered kind's fixed `{prefix}/packets/` prefix to an injected structural
+Azure `ContainerClient`, requests metadata and one bounded page, and validates
+that every result is an exact packet name with complete matching protocol
+metadata. It returns only sorted packet ID/schema/digest/length descriptors.
+Payloads are obtained separately through `readPacket()`, retaining canonical
+byte, digest, envelope, and schema validation at the consumer boundary.
+
+Azure continuations are wrapped in a bounded, deterministic, kind-bound opaque
+cursor. The cursor is not a credential, durable snapshot, event log, or
+processor checkpoint. It is valid only to continue a bounded traversal;
+processors fresh-scan when reconciling late/new packets and advance their
+durable checkpoint only after immutable output/manifests exist. A repeated,
+oversized, malformed, cross-kind, or empty-page continuation fails closed.
+
 ## Ownership Boundary
 
 This package owns conditional Blob mechanics, canonical representation,
-integrity metadata, exact replay, checkpoint CAS, bounded lease handling, and
-safe storage diagnostics.
+integrity metadata, exact replay, fixed-prefix bounded packet enumeration,
+checkpoint CAS, bounded lease handling, and safe storage diagnostics.
 
 The host continues to own:
 
@@ -107,7 +126,8 @@ The host continues to own:
 - private endpoints, managed identity, CMKs, RBAC, WAF, and telemetry policy;
 - container selection and UK-region deployment;
 - lifecycle, soft-delete, versioning, and backup retention configuration;
-- processor discovery, bounded retry, alerting, and release correlation; and
+- processor traversal/reconciliation, bounded retry, alerting, and release
+  correlation; and
 - proving that registered schemas contain only closed, identifier-free facts.
 
 `feedback.reporting.enabled` is evaluated by the host. The storage package does
@@ -123,7 +143,15 @@ privacy field guards, canonical encoding, and byte accounting.
 ### Accept a Blob prefix or path on every call
 
 Rejected. It would turn the entry point into a generic storage proxy and permit
-cross-boundary reads or writes. Prefixes are fixed once at store construction.
+cross-boundary reads or writes. Prefixes are fixed once at store construction;
+the bounded enumerator cannot accept or return one.
+
+### Return payloads directly from listing
+
+Rejected. Listing metadata and reading packet bytes have different bounds and
+failure modes. Returning payloads from the listing call would make aggregate
+byte accounting ambiguous and risk bypassing the exact canonical-byte and
+schema checks already enforced by `readPacket()`.
 
 ### Put account correlation in packet metadata
 
@@ -147,6 +175,9 @@ or pass outside the authorised service boundary.
   packet ID.
 - Processors can coordinate with bounded leases and ETag checkpoints without
   unbounded lock ownership.
+- Processors can traverse identifier-free packet descriptors in bounded pages
+  without receiving a Blob path, payload, provider continuation, or arbitrary
+  scan capability.
 - Canonical re-reads and integrity metadata add Blob I/O but detect corruption
   and ambiguous acknowledgements.
 - Schema registration fails closed when PII annotations are present.

@@ -1,4 +1,5 @@
 import { inspect } from "node:util";
+import type { ContainerClient as AzureBlobContainerClient } from "@azure/storage-blob";
 import { createSchema, field, validateUUID } from "@plasius/schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -9,9 +10,17 @@ import {
   type JsonPacketBlobClientPort,
   type JsonPacketBlobContainerPort,
   type JsonPacketBlobDownloadResponsePort,
+  type JsonPacketBlobListOptions,
+  type JsonPacketBlobListPagePort,
+  type JsonPacketBlobPageSettings,
   type JsonPacketBlobUploadOptions,
   type PersistableJsonSchemaPort,
 } from "../src/immutable-json-packets.js";
+
+type AzureContainerClientIsStructurallyCompatible =
+  AzureBlobContainerClient extends JsonPacketBlobContainerPort ? true : false;
+const azureContainerClientIsStructurallyCompatible:
+  AzureContainerClientIsStructurallyCompatible = true;
 
 interface StoredBlob {
   bytes: Uint8Array;
@@ -66,9 +75,11 @@ class MemoryLeaseClient {
 class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
   readonly blobs = new Map<string, StoredBlob>();
   readonly operations: Array<{
-    type: "download" | "upload";
+    type: "download" | "list" | "upload";
     path: string;
     options?: JsonPacketBlobUploadOptions;
+    listOptions?: JsonPacketBlobListOptions;
+    pageSettings?: JsonPacketBlobPageSettings;
   }> = [];
   readonly leases = new Map<string, MemoryLeaseClient>();
   onUpload?: (
@@ -77,6 +88,11 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
     options: JsonPacketBlobUploadOptions
   ) => void | Promise<void>;
   onDownload?: (path: string) => void | Promise<void>;
+  onList?: (
+    options: JsonPacketBlobListOptions,
+    settings: JsonPacketBlobPageSettings
+  ) => void | Promise<void>;
+  listPageOverride?: JsonPacketBlobListPagePort;
   omitUploadEtag = false;
   uploadEtagOverride?: string;
   private etagSequence = 1;
@@ -134,6 +150,59 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
           this.leases.set(path, lease);
         }
         return lease;
+      },
+    };
+  }
+
+  listBlobsFlat(options: JsonPacketBlobListOptions) {
+    return {
+      byPage: (settings: JsonPacketBlobPageSettings = {}) =>
+        this.listPages(options, settings),
+    };
+  }
+
+  private async *listPages(
+    options: JsonPacketBlobListOptions,
+    settings: JsonPacketBlobPageSettings
+  ): AsyncIterable<JsonPacketBlobListPagePort> {
+    this.operations.push({
+      type: "list",
+      path: options.prefix,
+      listOptions: options,
+      pageSettings: settings,
+    });
+    await this.onList?.(options, settings);
+    if (options.abortSignal?.aborted) {
+      throw storageFailure(499, "AbortError");
+    }
+    if (this.listPageOverride) {
+      yield this.listPageOverride;
+      return;
+    }
+    const offset = settings.continuationToken
+      ? Number(settings.continuationToken.replace("synthetic-offset-", ""))
+      : 0;
+    const maxPageSize = settings.maxPageSize ?? 5_000;
+    const matches = [...this.blobs.entries()]
+      .filter(([name]) => name.startsWith(options.prefix))
+      .sort(([left], [right]) => left.localeCompare(right));
+    const selected = matches.slice(offset, offset + maxPageSize);
+    const nextOffset = offset + selected.length;
+    yield {
+      continuationToken:
+        nextOffset < matches.length
+          ? `synthetic-offset-${nextOffset}`
+          : undefined,
+      segment: {
+        blobItems: selected.map(([name, blob]) => ({
+          name,
+          metadata: { ...blob.metadata },
+          properties: {
+            contentLength: blob.bytes.byteLength,
+            contentType: blob.contentType,
+            etag: blob.etag,
+          },
+        })),
       },
     };
   }
@@ -244,9 +313,28 @@ function createStore(
       timeoutMs: 1_000,
       maxPacketBytes: 8_192,
       maxReadBytes: 64 * 1024,
+      maxListPageItems: 10,
+      maxListPageBytes: 64 * 1024,
       maxManifestEntries: 100,
       clock: () => new Date("2026-07-18T12:00:00.000Z"),
     }),
+  };
+}
+
+function listedBlob(
+  container: MemoryJsonBlobContainer,
+  path: string
+): JsonPacketBlobListPagePort["segment"]["blobItems"][number] {
+  const blob = container.blobs.get(path);
+  if (!blob) throw new Error("missing test blob");
+  return {
+    name: path,
+    metadata: { ...blob.metadata },
+    properties: {
+      contentLength: blob.bytes.byteLength,
+      contentType: blob.contentType,
+      etag: blob.etag,
+    },
   };
 }
 
@@ -723,6 +811,364 @@ describe("immutable schema-backed JSON packet storage", () => {
     expect(
       container.operations.filter((operation) => operation.type === "download")
     ).toHaveLength(0);
+  });
+});
+
+describe("bounded fixed-prefix packet enumeration", () => {
+  it("lists only fixed-prefix packet descriptors with deterministic cursor paging", async () => {
+    expect(azureContainerClientIsStructurallyCompatible).toBe(true);
+    const { container, store } = createStore();
+    const packetIds = [
+      "bug_01j1te5t000000000000000203",
+      "bug_01j1te5t000000000000000201",
+      "bug_01j1te5t000000000000000202",
+    ];
+    for (const packetId of packetIds) {
+      await store.writePacket("bug", packetId, packet());
+    }
+    await store.compareAndSwapCheckpoint(
+      "bug",
+      "hourly-materializer",
+      null,
+      { cursor: 0, revision: 0 }
+    );
+
+    const first = await store.listPacketPage("bug", {
+      maxItems: 2,
+      maxBytes: 32 * 1024,
+    });
+    const repeated = await store.listPacketPage("bug", {
+      maxItems: 2,
+      maxBytes: 32 * 1024,
+    });
+
+    expect(first).toMatchObject({
+      kind: "bug",
+      complete: false,
+      packets: [
+        { packetId: packetIds[1], schemaId: "feedbackBugPacket" },
+        { packetId: packetIds[2], schemaId: "feedbackBugPacket" },
+      ],
+    });
+    expect(first.nextCursor).toBe(repeated.nextCursor);
+    expect(first.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(first.nextCursor).not.toContain("synthetic-offset-2");
+    expect(first.byteLength).toBe(
+      first.packets.reduce((total, item) => total + item.byteLength, 0)
+    );
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.packets)).toBe(true);
+    expect(Object.isFrozen(first.packets[0])).toBe(true);
+
+    const second = await store.listPacketPage("bug", {
+      cursor: first.nextCursor,
+      maxItems: 2,
+      maxBytes: 32 * 1024,
+    });
+    expect(second).toMatchObject({
+      kind: "bug",
+      complete: true,
+      packets: [{ packetId: packetIds[0] }],
+    });
+    expect(second.nextCursor).toBeUndefined();
+    await expect(
+      store.readPacket("bug", second.packets[0]?.packetId as string)
+    ).resolves.toEqual(packet());
+
+    const listOperations = container.operations.filter(
+      (operation) => operation.type === "list"
+    );
+    expect(listOperations).toHaveLength(3);
+    expect(listOperations[0]).toMatchObject({
+      path: "feedback/bugs/packets/",
+      listOptions: {
+        prefix: "feedback/bugs/packets/",
+        includeMetadata: true,
+      },
+      pageSettings: { maxPageSize: 2 },
+    });
+    expect(listOperations[2]?.pageSettings?.continuationToken).toBe(
+      "synthetic-offset-2"
+    );
+    const renderedPage = inspect(first, { depth: 10 });
+    expect(renderedPage).not.toContain("feedback/bugs");
+    expect(renderedPage).not.toContain("functionality");
+    expect(renderedPage).not.toContain("gameplay");
+    expect(renderedPage).not.toContain("controls");
+  });
+
+  it("ignores runtime attempts to inject a scan prefix and fails closed without a list driver", async () => {
+    const { container, store } = createStore();
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000000209",
+      packet()
+    );
+    await store.listPacketPage("bug", {
+      prefix: "feedback/reviews/packets/",
+    } as never);
+    expect(
+      container.operations.find((operation) => operation.type === "list")?.path
+    ).toBe("feedback/bugs/packets/");
+
+    const writeOnlyContainer: JsonPacketBlobContainerPort = {
+      getBlockBlobClient: (path) => container.getBlockBlobClient(path),
+    };
+    const writeOnlyStore = createImmutableJsonPacketStore({
+      container: writeOnlyContainer,
+      kinds: { bug: kindConfig },
+    });
+    await expect(writeOnlyStore.listPacketPage("bug")).rejects.toMatchObject({
+      code: "INVALID_CONFIG",
+      diagnostic: { operation: "list-packets", recordType: "packet" },
+    });
+  });
+
+  it("binds opaque cursors to their configured packet kind", async () => {
+    const container = new MemoryJsonBlobContainer();
+    const store = createImmutableJsonPacketStore({
+      container,
+      kinds: {
+        bug: kindConfig,
+        review: { ...kindConfig, prefix: "feedback/reviews" },
+      },
+      maxListPageItems: 1,
+      maxListPageBytes: 64 * 1024,
+    });
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000000211",
+      packet()
+    );
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000000212",
+      packet()
+    );
+    const first = await store.listPacketPage("bug");
+
+    await expect(
+      store.listPacketPage("review", { cursor: first.nextCursor })
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      store.listPacketPage("bug", { cursor: "not-a-valid-cursor" })
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      store.listPacketPage("bug", { cursor: "x".repeat(8 * 1024 + 1) })
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(
+      container.operations.filter((operation) => operation.type === "list")
+    ).toHaveLength(1);
+  });
+
+  it("rejects request bounds before invoking the Blob listing port", async () => {
+    const { container, store } = createStore();
+    const outcomes = await Promise.allSettled([
+      store.listPacketPage("bug", { maxItems: 0 }),
+      store.listPacketPage("bug", { maxItems: 11 }),
+      store.listPacketPage("bug", { maxBytes: 0 }),
+      store.listPacketPage("bug", { maxBytes: 64 * 1024 + 1 }),
+      store.listPacketPage("bug", { timeoutMs: 0 }),
+      store.listPacketPage("missing" as "bug"),
+    ]);
+
+    expect(
+      outcomes.every(
+        (outcome) =>
+          outcome.status === "rejected" &&
+          outcome.reason instanceof ImmutableJsonPacketStorageError &&
+          outcome.reason.code === "INVALID_ARGUMENT"
+      )
+    ).toBe(true);
+    expect(container.operations).toHaveLength(0);
+  });
+
+  it("fails closed on out-of-prefix, malformed, duplicate, and non-progressing pages", async () => {
+    const path = "feedback/bugs/packets/bug_01j1te5t000000000000000221.json";
+    const makeCase = async (
+      page: (item: ReturnType<typeof listedBlob>) => JsonPacketBlobListPagePort,
+      expectedCode: "CORRUPT_RECORD" | "LIMIT_EXCEEDED",
+      maxBytes = 16 * 1024
+    ) => {
+      const { container, store } = createStore();
+      await store.writePacket(
+        "bug",
+        "bug_01j1te5t000000000000000221",
+        packet()
+      );
+      container.listPageOverride = page(listedBlob(container, path));
+      await expect(
+        store.listPacketPage("bug", { maxItems: 2, maxBytes })
+      ).rejects.toMatchObject({ code: expectedCode });
+    };
+
+    await makeCase(
+      (item) => ({
+        segment: {
+          blobItems: [{ ...item, name: "feedback/reviews/packets/foreign.json" }],
+        },
+      }),
+      "CORRUPT_RECORD"
+    );
+    await makeCase(
+      (item) => ({
+        segment: {
+          blobItems: [
+            {
+              ...item,
+              properties: { ...item.properties, contentLength: 1 },
+            },
+          ],
+        },
+      }),
+      "CORRUPT_RECORD"
+    );
+    await makeCase(
+      (item) => ({
+        segment: {
+          blobItems: [
+            { ...item, metadata: { ...item.metadata, userid: "synthetic" } },
+          ],
+        },
+      }),
+      "CORRUPT_RECORD"
+    );
+    await makeCase(
+      (item) => ({ segment: { blobItems: [item, item] } }),
+      "CORRUPT_RECORD"
+    );
+    await makeCase(
+      () => ({
+        continuationToken: "synthetic-non-progressing-token",
+        segment: { blobItems: [] },
+      }),
+      "CORRUPT_RECORD"
+    );
+    await makeCase(
+      (item) => ({ segment: { blobItems: [item] } }),
+      "LIMIT_EXCEEDED",
+      1
+    );
+  });
+
+  it("bounds provider pages independently of requested page size", async () => {
+    const { container, store } = createStore();
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000000231",
+      packet()
+    );
+    const item = listedBlob(
+      container,
+      "feedback/bugs/packets/bug_01j1te5t000000000000000231.json"
+    );
+    container.listPageOverride = {
+      segment: { blobItems: [item, { ...item, name: item.name.replace("231", "232") }] },
+    };
+
+    await expect(
+      store.listPacketPage("bug", { maxItems: 1 })
+    ).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+  });
+
+  it("rejects oversized and non-advancing provider continuations", async () => {
+    const { container, store } = createStore();
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000000235",
+      packet()
+    );
+    const item = listedBlob(
+      container,
+      "feedback/bugs/packets/bug_01j1te5t000000000000000235.json"
+    );
+    container.listPageOverride = {
+      continuationToken: "x".repeat(4 * 1024 + 1),
+      segment: { blobItems: [item] },
+    };
+    await expect(store.listPacketPage("bug")).rejects.toMatchObject({
+      code: "CORRUPT_RECORD",
+    });
+
+    container.listPageOverride = undefined;
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000000236",
+      packet()
+    );
+    const first = await store.listPacketPage("bug", { maxItems: 1 });
+    const rawContinuation = container.operations
+      .filter((operation) => operation.type === "list")
+      .at(-1)?.pageSettings?.continuationToken;
+    expect(rawContinuation).toBeUndefined();
+    container.listPageOverride = {
+      continuationToken: "synthetic-offset-1",
+      segment: { blobItems: [item] },
+    };
+    await expect(
+      store.listPacketPage("bug", {
+        cursor: first.nextCursor,
+        maxItems: 1,
+      })
+    ).rejects.toMatchObject({ code: "CORRUPT_RECORD" });
+  });
+
+  it("honours cancellation and deadlines and redacts listing-provider failures", async () => {
+    const cancelled = createStore();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      cancelled.store.listPacketPage("bug", { signal: controller.signal })
+    ).rejects.toMatchObject({ code: "ABORTED" });
+    expect(cancelled.container.operations).toHaveLength(0);
+
+    const timed = createStore();
+    let deadlineSignal: AbortSignal | undefined;
+    timed.container.onList = async () => {
+      deadlineSignal = timed.container.operations.at(-1)?.listOptions?.abortSignal;
+      await new Promise<void>(() => undefined);
+    };
+    await expect(
+      timed.store.listPacketPage("bug", { timeoutMs: 5 })
+    ).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
+    expect(deadlineSignal?.aborted).toBe(true);
+
+    const failed = createStore();
+    failed.container.onList = () => {
+      throw storageFailure(
+        500,
+        "InternalError",
+        "synthetic-list-provider-detail?sig=synthetic-secret"
+      );
+    };
+    const error = await failed.store
+      .listPacketPage("bug")
+      .catch((caught: unknown) => caught);
+    const rendered = inspect(error, { depth: 10 });
+    expect(error).toMatchObject({
+      code: "STORAGE_OPERATION_FAILED",
+      cause: { redacted: true },
+      diagnostic: { operation: "list-packets", recordType: "packet" },
+    });
+    expect(rendered).not.toContain("synthetic-list-provider-detail");
+    expect(rendered).not.toContain("synthetic-secret");
+  });
+
+  it("keeps payload validation and full byte integrity at the exact read boundary", async () => {
+    const { container, store } = createStore();
+    const packetId = "bug_01j1te5t000000000000000241";
+    await store.writePacket("bug", packetId, packet());
+    const page = await store.listPacketPage("bug");
+    expect(page.packets).toHaveLength(1);
+
+    const stored = container.blobs.get(
+      `feedback/bugs/packets/${packetId}.json`
+    );
+    if (!stored) throw new Error("missing test blob");
+    stored.bytes = new TextEncoder().encode('{"tampered":true}\n');
+    await expect(store.readPacket("bug", packetId)).rejects.toMatchObject({
+      code: "CORRUPT_RECORD",
+    });
   });
 });
 

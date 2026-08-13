@@ -76,6 +76,14 @@ reconciliation; lease conflicts use their own exact provider-code classifier.
 Provider-returned ETags are bounded before receipts, reads, or
 compare-and-swap.
 
+Packet enumeration is restricted to one bounded flat-list page beneath the
+registered kind's fixed packet prefix. Callers cannot provide a Blob prefix,
+path, container, or URL. Listed entries expose only identifier-free packet IDs,
+schema identity, digest, and byte length after exact metadata validation;
+payloads still require the full `readPacket()` integrity and schema boundary.
+Opaque list cursors are kind-bound, size-bounded traversal aids, not durable
+snapshots, credentials, or processor checkpoints. Do not log them.
+
 The following content is outside this API contract and must be discarded or
 kept in its separately authorised control plane before storage:
 
