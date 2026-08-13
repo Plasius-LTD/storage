@@ -102,6 +102,20 @@ describe("release snapshot selection", () => {
     );
   });
 
+  it("publishes the verified tarball as an explicit local package path", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/cd.yml", import.meta.url),
+      "utf8"
+    );
+
+    expect(workflow).toContain(
+      'npm publish "./${TARBALL}" --ignore-scripts "${PUBLISH_ARGS[@]}"'
+    );
+    expect(workflow).not.toContain(
+      'npm publish "${TARBALL}" --ignore-scripts "${PUBLISH_ARGS[@]}"'
+    );
+  });
+
   it("rejects a moved remote ref while retaining immutable Git-object reads", async () => {
     const repository = await mkdtemp(join(tmpdir(), "storage-release-"));
     temporaryDirectories.push(repository);
