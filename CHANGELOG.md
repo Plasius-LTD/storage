@@ -17,6 +17,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 - **Fixed**
   - Consume the complete package tar listing when checking for built output so
     `pipefail` cannot mistake a successful early match for a failed archive.
+  - Pass the verified publication tarball to npm as an explicit local path so
+    npm cannot interpret the artifact directory as a hosted Git repository.
 
 - **Security**
   - (placeholder)
