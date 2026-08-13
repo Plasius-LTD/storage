@@ -88,6 +88,20 @@ describe("release snapshot selection", () => {
     }
   });
 
+  it("consumes the complete tar listing while verifying built output", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/cd.yml", import.meta.url),
+      "utf8"
+    );
+
+    expect(workflow).not.toMatch(
+      /tar -tzf "\$\{TARBALL\}" \| grep -E[q]? '\^package\/dist/gu
+    );
+    expect(workflow).toContain(
+      `tar -tzf "\${TARBALL}" | awk '\n            /^package\\/dist(\\/|$)/ { found = 1 }\n            END { exit(found ? 0 : 1) }\n          '`
+    );
+  });
+
   it("rejects a moved remote ref while retaining immutable Git-object reads", async () => {
     const repository = await mkdtemp(join(tmpdir(), "storage-release-"));
     temporaryDirectories.push(repository);
