@@ -4,8 +4,76 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { buildSync } = require("esbuild");
+const {
+  collectRepositoryArtifactPaths,
+  compareExactPathAllowlist,
+  findPackageFilesPolicyViolations,
+  findPrivateArtifactViolations,
+} = require("./private-artifact-policy.cjs");
+
+const EXPECTED_PACKAGE_FILES_ENTRIES = Object.freeze([
+  "dist",
+  "src",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "SECURITY.md",
+  "CODE_OF_CONDUCT.md",
+  "CONTRIBUTORS.md",
+  "docs",
+  "legal/CLA.md",
+  "legal/INDIVIDUAL_CLA.md",
+  "legal/CORPORATE_CLA.md",
+]);
+
+const EXPECTED_PUBLIC_PACKAGE_PATHS = Object.freeze([
+  "package.json",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "SECURITY.md",
+  "CODE_OF_CONDUCT.md",
+  "CONTRIBUTORS.md",
+  "src/index.ts",
+  "src/immutable-assets.ts",
+  "src/immutable-json-packets.ts",
+  "dist/index.js",
+  "dist/index.js.map",
+  "dist/index.cjs",
+  "dist/index.cjs.map",
+  "dist/index.d.ts",
+  "dist/index.d.cts",
+  "dist/immutable-assets.js",
+  "dist/immutable-assets.js.map",
+  "dist/immutable-assets.cjs",
+  "dist/immutable-assets.cjs.map",
+  "dist/immutable-assets.d.ts",
+  "dist/immutable-assets.d.cts",
+  "dist/immutable-json-packets.js",
+  "dist/immutable-json-packets.js.map",
+  "dist/immutable-json-packets.cjs",
+  "dist/immutable-json-packets.cjs.map",
+  "dist/immutable-json-packets.d.ts",
+  "dist/immutable-json-packets.d.cts",
+  "docs/adrs/adr-template.md",
+  "docs/adrs/adr-0001-storage-package-scope.md",
+  "docs/adrs/adr-0002-public-repo-governance.md",
+  "docs/adrs/adr-0003-immutable-asset-version-storage.md",
+  "docs/adrs/adr-0004-immutable-schema-backed-json-packet-storage.md",
+  "docs/adrs/adr-0005-exact-main-oidc-package-publishing.md",
+  "docs/adrs/adr-0006-path-only-private-artifact-prevention-gates.md",
+  "docs/adrs/index.md",
+  "docs/tdrs/tdr-0001-immutable-asset-storage-protocol.md",
+  "docs/tdrs/tdr-0002-immutable-json-packet-storage-protocol.md",
+  "legal/CLA.md",
+  "legal/INDIVIDUAL_CLA.md",
+  "legal/CORPORATE_CLA.md",
+]);
 
 async function main() {
+  verifyRepositoryPrivateArtifactPolicy();
+  verifyPackageFilesAllowlist();
+
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "storage-packcheck-"));
   try {
     const output = execFileSync(
@@ -24,6 +92,32 @@ async function main() {
     const parsed = parseNpmPackJson(output);
     const packResult = Array.isArray(parsed) ? parsed[0] : undefined;
     const paths = (packResult?.files ?? []).map((entry) => entry.path);
+
+    const privateArtifactViolations = findPrivateArtifactViolations(paths);
+    if (privateArtifactViolations.length > 0) {
+      throw new Error(
+        formatPrivateArtifactViolations(
+          "Public package contains prohibited private artifact paths",
+          privateArtifactViolations
+        )
+      );
+    }
+
+    const packagePathComparison = compareExactPathAllowlist(
+      paths,
+      EXPECTED_PUBLIC_PACKAGE_PATHS
+    );
+    if (
+      packagePathComparison.missingPaths.length > 0 ||
+      packagePathComparison.unexpectedPaths.length > 0
+    ) {
+      throw new Error(
+        formatAllowlistDifference(
+          "Public package path manifest differs from the exact allowlist",
+          packagePathComparison
+        )
+      );
+    }
 
     const requiredPaths = [
       "package.json",
@@ -95,6 +189,63 @@ async function main() {
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
+}
+
+function verifyRepositoryPrivateArtifactPolicy() {
+  const violations = findPrivateArtifactViolations(
+    collectRepositoryArtifactPaths(process.cwd())
+  );
+  if (violations.length > 0) {
+    throw new Error(
+      formatPrivateArtifactViolations(
+        "Public package check stopped before npm pack because prohibited repository paths were found",
+        violations
+      )
+    );
+  }
+}
+
+function verifyPackageFilesAllowlist() {
+  const manifestPath = path.resolve(process.cwd(), "package.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const policyViolations = findPackageFilesPolicyViolations(manifest.files);
+  if (policyViolations.length > 0) {
+    throw new Error(
+      `package.json files policy failed:\n${policyViolations
+        .map((violation) => `- ${violation.entry} (${violation.ruleId})`)
+        .join("\n")}`
+    );
+  }
+
+  const comparison = compareExactPathAllowlist(
+    manifest.files,
+    EXPECTED_PACKAGE_FILES_ENTRIES
+  );
+  if (comparison.missingPaths.length > 0 || comparison.unexpectedPaths.length > 0) {
+    throw new Error(
+      formatAllowlistDifference(
+        "package.json files differs from the approved package-surface allowlist",
+        comparison
+      )
+    );
+  }
+}
+
+function formatPrivateArtifactViolations(label, violations) {
+  return `${label}; file contents were not inspected:\n${violations
+    .map((violation) => `- ${violation.artifactPath} (${violation.ruleId})`)
+    .join("\n")}`;
+}
+
+function formatAllowlistDifference(label, comparison) {
+  const details = [];
+  if (comparison.missingPaths.length > 0) {
+    details.push(`missing: ${comparison.missingPaths.join(", ")}`);
+  }
+  if (comparison.unexpectedPaths.length > 0) {
+    details.push(`unexpected: ${comparison.unexpectedPaths.join(", ")}`);
+  }
+  return `${label}: ${details.join("; ")}`;
 }
 
 function verifyInstalledExportMap(consumerDirectory) {

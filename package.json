@@ -8,8 +8,9 @@
   "description": "Azure storage, immutable asset-version, and schema-backed JSON packet primitives for Plasius projects",
   "scripts": {
     "build": "tsup",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:privacy",
     "test:watch": "vitest",
+    "test:privacy": "node --test tests/private-artifact-policy.test.cjs",
     "typecheck": "tsc --noEmit",
     "test:coverage": "vitest run --coverage",
     "test:coverage:watch": "vitest --coverage",
@@ -19,12 +20,12 @@
     "audit:eslint": "eslint . --max-warnings=0",
     "audit:deps": "npm ls --all --omit=optional --omit=peer > /dev/null 2>&1 || true",
     "audit:npm": "npm audit --audit-level=high --omit=dev",
-    "audit:test": "vitest run --coverage",
+    "audit:test": "vitest run --coverage && npm run test:privacy",
     "audit:all": "npm-run-all -l audit:ts audit:eslint audit:deps audit:npm audit:test",
     "lint": "eslint . --max-warnings=0",
     "prepare": "npm run build",
-    "pack:check": "node scripts/verify-public-package.cjs",
     "privacy:check": "node scripts/verify-public-artifacts.cjs --package-dir .",
+    "pack:check": "npm run privacy:check && node scripts/verify-public-package.cjs",
     "prepublishOnly": "npm run build && npm run pack:check"
   },
   "author": "Plasius LTD <development@plasius.co.uk>",
@@ -102,7 +103,9 @@
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTORS.md",
     "docs",
-    "legal"
+    "legal/CLA.md",
+    "legal/INDIVIDUAL_CLA.md",
+    "legal/CORPORATE_CLA.md"
   ],
   "repository": {
     "type": "git",
