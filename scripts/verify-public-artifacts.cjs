@@ -4,6 +4,10 @@
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  collectRepositoryArtifactPaths,
+  findPrivateArtifactViolations,
+} = require("./private-artifact-policy.cjs");
 
 const PROHIBITED = "legal/cla-registry.csv";
 
@@ -152,6 +156,8 @@ function main() {
   const root = process.cwd();
   const options = parseArguments(process.argv.slice(2));
 
+  enforcePrivateArtifactPolicy(root);
+
   // Source metadata is checked first. npm pack is never invoked while the
   // prohibited path is present, so this process never asks npm to read it.
   const sourceMatches = collectSourceMatches(root);
@@ -171,6 +177,19 @@ function main() {
     ? "source metadata checked"
     : `${options.packageDirectories.length} npm package inventory check(s) passed`;
   console.log(`Public artifact integrity passed (${suffix}; contents of the prohibited path were not read).`);
+}
+
+function enforcePrivateArtifactPolicy(root) {
+  const violations = findPrivateArtifactViolations(
+    collectRepositoryArtifactPaths(root)
+  );
+  if (violations.length > 0) {
+    throw new Error(
+      `Private artifact policy failed; file contents were not inspected:\n${violations
+        .map((violation) => `- ${violation.artifactPath} (${violation.ruleId})`)
+        .join("\n")}`
+    );
+  }
 }
 
 try {
