@@ -31,12 +31,15 @@ enforcement boundaries:
    contributor acceptance/signature/submission record aliases, signed
    contributor agreement aliases, and paths that combine a privacy marker with
    a registry marker. The semantic matcher covers hierarchical and
-   separator-free camel/acronym terms. Unicode NFKC normalization runs before
-   structural path handling so compatibility separators, Windows and POSIX
-   separators, and the optional npm `package/` prefix reduce to one
+   case-insensitive separator-free terms. Unicode NFKC normalization runs
+   before structural path handling so compatibility separators, Windows and
+   POSIX separators, and the optional npm `package/` prefix reduce to one
    representation. Explicit process, template, policy, schema, and validator
    files remain public, but a matching component used as a directory fails
-   closed.
+   closed. A separate classification copy removes Windows-ignored trailing
+   dots and spaces from every component and structurally normalizes the result;
+   raw package-member identity remains unchanged for exact allowlist and
+   collision enforcement.
 3. `package.json.files` must be a non-empty explicit allowlist. Repository-root,
    wildcard, and complete `legal` directory entries are forbidden; only the
    exact public CLA Markdown documents are included.

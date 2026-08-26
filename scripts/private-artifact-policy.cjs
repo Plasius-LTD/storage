@@ -29,11 +29,20 @@ const REGISTRY_MARKERS = new Set([
 
 const CLA_MARKERS = new Set(["cla", "clas", "contributor", "contributors"]);
 
-const CONTRIBUTOR_PRIVATE_RECORD_PATTERN =
-  /(?:^|[^a-z0-9])(?:(?:contributors?[^a-z0-9]*(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]*contributors?[^a-z0-9]*(?:agreements?|clas?))|(?:contributors?[^a-z0-9]*signed[^a-z0-9]*(?:agreements?|clas?))|(?:contributors?[^a-z0-9]*(?:agreements?|clas?)[^a-z0-9]*(?:signed|signatures?)))(?=$|[^a-z0-9])/giu;
+const CONCATENATED_RECORD_SUFFIX_PATTERN =
+  "(?:acceptances?|archives?|backups?|cop(?:y|ies)|executed|final|records?|signatures?|signed|storage|submissions?|process|templates?|polic(?:y|ies)|guides?|guidance|documentation|docs?|instructions?|examples?|schemas?|validators?|formats?|spec(?:ification)?s?|v?[0-9])";
 
-const SIGNED_CLA_PRIVATE_RECORD_PATTERN =
-  /(?:^|[^a-z0-9])(?:(?:signed[^a-z0-9]*clas?)|(?:cla[^a-z0-9]*(?:acceptances?|signatures?|submissions?)))(?=$|[^a-z0-9])/giu;
+const CLA_RECORD_TERM_PATTERN = String.raw`clas?(?!s)(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN})`;
+
+const CONTRIBUTOR_PRIVATE_RECORD_PATTERN = new RegExp(
+  String.raw`(?:^|[^a-z0-9])(?:(?:contributors?[^a-z0-9]*(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]*contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*signed[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN})[^a-z0-9]*(?:signed|signatures?)))`,
+  "giu"
+);
+
+const SIGNED_CLA_PRIVATE_RECORD_PATTERN = new RegExp(
+  String.raw`(?:^|[^a-z0-9])(?:(?:signed[^a-z0-9]*${CLA_RECORD_TERM_PATTERN})|(?:cla[^a-z0-9]*(?:acceptances?|signatures?|submissions?)))`,
+  "giu"
+);
 
 const safeArtifactPolicyErrors = new WeakMap();
 
@@ -124,6 +133,27 @@ function normalizeArtifactPath(artifactPath) {
 }
 
 /**
+ * Canonicalize Windows-ignored trailing dots and spaces only for policy
+ * classification. The raw normalized identity remains unchanged for package
+ * allowlists, collision checks, and violation accounting.
+ *
+ * @param {string} artifactPath
+ * @returns {string}
+ */
+function canonicalizeArtifactPathForClassification(artifactPath) {
+  const windowsCanonicalPath = artifactPath
+    .split("/")
+    .map((component) =>
+      component === "." || component === ".."
+        ? component
+        : component.replace(/[ .]+$/gu, "")
+    )
+    .join("/");
+  const structurallyCanonicalPath = path.posix.normalize(windowsCanonicalPath);
+  return structurallyCanonicalPath === "." ? "" : structurallyCanonicalPath;
+}
+
+/**
  * Classify contributor record categories while retaining explicit public
  * process, template, schema, validator, and policy documents. A matching
  * category used as a directory remains private regardless of its suffix.
@@ -188,10 +218,18 @@ function matchesDirectPrivateRecordStorage(artifactPath, pattern) {
       phraseEnd,
       nextSeparator === -1 ? semanticPath.length : nextSeparator
     );
+    const publicSuffixCandidates = [componentSuffix];
+    // In a separator-free name, a greedy plural can consume the leading "s"
+    // from a public "schema" or "specification" qualifier.
+    if (match[0].toLocaleLowerCase("en-US").endsWith("s")) {
+      publicSuffixCandidates.push(`s${componentSuffix}`);
+    }
     const isPublicDocumentation =
       nextSeparator === -1 &&
-      PUBLIC_CONTRIBUTOR_DOCUMENT_QUALIFIER_PATTERNS.some((pattern) =>
-        pattern.test(componentSuffix)
+      publicSuffixCandidates.some((suffix) =>
+        PUBLIC_CONTRIBUTOR_DOCUMENT_QUALIFIER_PATTERNS.some((pattern) =>
+          pattern.test(suffix)
+        )
       );
     if (!isPublicDocumentation) {
       return true;
@@ -341,14 +379,20 @@ function findPrivateArtifactViolations(artifactPaths) {
     if (!artifactPath) {
       continue;
     }
+    const classificationPath = canonicalizeArtifactPathForClassification(
+      artifactPath
+    );
+    if (!classificationPath) {
+      continue;
+    }
 
-    const tokens = artifactPath
+    const tokens = classificationPath
       .toLocaleLowerCase("en-US")
       .split(/[^a-z0-9]+/u)
       .filter(Boolean);
 
     for (const rule of PRIVATE_ARTIFACT_RULES) {
-      if (!rule.matches(artifactPath, tokens)) {
+      if (!rule.matches(classificationPath, tokens)) {
         continue;
       }
 

@@ -54,6 +54,36 @@ test("rejects every CSV extension case-insensitively", () => {
   );
 });
 
+test("classifies Windows trailing dot and space aliases without rewriting identity", () => {
+  const protectedPaths = [
+    "reports/windows-alias.csv. ",
+    "reports/windows-alias.CSV...",
+    "reports\\windows-alias.csv. ",
+    "reports. /windows-alias.csv. ",
+    "package/reports/windows-alias.csv. ",
+    "reports/windows-alias．csv．　",
+  ];
+
+  for (const candidate of protectedPaths) {
+    const violations = findPrivateArtifactViolations([candidate]);
+    assert.equal(violations.length, 1, candidate);
+    assert.equal(violations[0].ruleId, "csv-artifact", candidate);
+  }
+
+  assert.equal(
+    normalizeArtifactPath("package/reports/windows-alias.csv. "),
+    "reports/windows-alias.csv. "
+  );
+  assert.deepEqual(
+    findPrivateArtifactViolations([
+      "reports/windows-alias.csv.example",
+      "reports/windows-alias.csv .txt",
+      "reports/windows-alias.csv..txt",
+    ]),
+    []
+  );
+});
+
 test("rejects CLA and contributor registries with any extension", () => {
   const violations = findPrivateArtifactViolations([
     "legal/cla-registry.json",
@@ -96,6 +126,9 @@ test("rejects hierarchical and compatibility-spelled signed CLA storage", () => 
     "legal/claSignatures.json",
     "legal/signedCLABackup.pdf",
     "legal/claSignaturesBackup.json",
+    "legal/signedclabackup.pdf",
+    "legal/clasignaturesbackup.json",
+    "legal/SIGNEDCLABACKUP.PDF",
     "legal/signed-cla-backup.pdf",
   ];
 
@@ -139,6 +172,9 @@ test("rejects contributor record and signed agreement aliases", () => {
     "legal/contributorAgreementSignature.pdf",
     "legal/contributorSignaturesBackup.json",
     "legal/signedContributorAgreementBackup.pdf",
+    "legal/contributorsignaturesbackup.json",
+    "legal/signedcontributoragreementbackup.pdf",
+    "legal/CONTRIBUTORSIGNATURESBACKUP.JSON",
     "legal/ＣＯＮＴＲＩＢＵＴＯＲ／ＡＣＣＥＰＴＡＮＣＥＳ／record.json",
     "legal/signed＼contributor＼agreement.pdf",
     "legal/signed﹨contributor﹨agreement.pdf",
@@ -179,6 +215,14 @@ test("allows public CLA templates, contributor documentation, and benign technic
       "docs/signed-cla-template.md",
       "docs/signedCLATemplate.md",
       "src/claSignatureSchema.ts",
+      "docs/signedclatemplate.md",
+      "src/clasignatureschema.ts",
+      "docs/signedcontributoragreementtemplate.md",
+      "src/contributorsignatureschema.ts",
+      "docs/signedclauses.md",
+      "docs/signedclaimsprocess.md",
+      "src/signedclassification.ts",
+      "src/signedclasses.ts",
     ]),
     []
   );
@@ -190,17 +234,24 @@ test("package inventory uses the shared contributor-record policy", (t) => {
 
   const packageRoot = path.join(root, ".cache", "pkg");
   fs.mkdirSync(path.join(packageRoot, "legal"), { recursive: true });
+  fs.mkdirSync(path.join(packageRoot, "reports"), { recursive: true });
   fs.writeFileSync(
     path.join(packageRoot, "package.json"),
     `${JSON.stringify({
       name: "synthetic-private-package",
       version: "1.0.0",
-      files: ["legal"],
+      files: ["legal", "reports"],
     })}\n`,
     "utf8"
   );
   fs.closeSync(
     fs.openSync(path.join(packageRoot, "legal", "contributor-signatures.json"), "w")
+  );
+  fs.closeSync(
+    fs.openSync(path.join(packageRoot, "reports", "windows-alias.csv. "), "w")
+  );
+  fs.closeSync(
+    fs.openSync(path.join(packageRoot, "legal", "signedclabackup.pdf"), "w")
   );
 
   const verifier = path.resolve(
@@ -221,10 +272,12 @@ test("package inventory uses the shared contributor-record policy", (t) => {
   );
 
   assert.equal(result.status, 1);
+  assert.match(result.stderr, /csv-artifact: 1/u);
   assert.match(result.stderr, /contributor-record-storage: 1/u);
+  assert.match(result.stderr, /signed-cla-storage: 1/u);
   assert.doesNotMatch(
     result.stderr,
-    /\.cache|legal\/|signatures|\.json/u
+    /\.cache|legal\/|reports\/|signatures|signedcla|backup|windows-alias|\.json|\.csv/u
   );
 });
 
@@ -420,6 +473,9 @@ test("repository gates reject staged contributor aliases without logging paths",
     "legal/signedContributorAgreement.pdf",
     "legal/signed/CLAs/record.pdf",
     "legal/CLA/signatures/record.pdf",
+    "legal/signedclabackup.pdf",
+    "legal/contributorsignaturesbackup.json",
+    "reports/windows-alias.csv. ",
   ];
   const legitimateControls = [
     "docs/contributor-acceptance-process.md",
@@ -461,11 +517,12 @@ test("repository gates reject staged contributor aliases without logging paths",
     });
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /contributor-record-storage: 5/u);
-    assert.match(result.stderr, /signed-cla-storage: 2/u);
+    assert.match(result.stderr, /csv-artifact: 1/u);
+    assert.match(result.stderr, /contributor-record-storage: 6/u);
+    assert.match(result.stderr, /signed-cla-storage: 3/u);
     assert.doesNotMatch(
       result.stderr,
-      /legal\/|acceptances|signatures|agreement|\.json|\.pdf/u
+      /legal\/|reports\/|windows-alias|signedcla|backup|acceptances|signatures|agreement|\.json|\.pdf|\.csv/u
     );
   }
 });
@@ -526,6 +583,14 @@ test("rejects duplicate and normalization-colliding raw package members", () => 
   assert.deepEqual(
     compareExactPathAllowlist(["package/README.md"], ["README.md"]),
     { missingPaths: [], unexpectedPaths: [] }
+  );
+  assert.deepEqual(
+    compareExactPathAllowlist(["package/README.md. "], ["README.md"]),
+    { missingPaths: ["README.md"], unexpectedPaths: ["README.md. "] }
+  );
+  assert.deepEqual(
+    compareExactPathAllowlist(["package/readme.md"], ["README.md"]),
+    { missingPaths: ["README.md"], unexpectedPaths: ["readme.md"] }
   );
 });
 

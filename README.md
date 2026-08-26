@@ -324,9 +324,13 @@ messages expose rule counts rather than suspected path values.
 `privacy:check` rejects protected paths in the working tree and proposed Git
 index. This includes contributor acceptance, signature, submission, and signed
 agreement record aliases across hierarchical, Windows, and Unicode
-compatibility path forms, separator-free camel/acronym forms, and hierarchical
-signed-CLA categories. Explicit process, template, policy, schema, and validator
-documents remain public only when they are files, not record directories.
+compatibility path forms, case-insensitive separator-free forms, and
+hierarchical signed-CLA categories. Explicit process, template, policy, schema,
+and validator documents remain public only when they are files, not record
+directories.
+Windows-ignored trailing dots and spaces are removed from each path component
+only for classification, so a path such as `report.csv. ` is rejected while its
+raw package identity remains distinct for exact allowlist and collision checks.
 Policy rejections expose only rule counts; exceptional traversal or verifier
 failures expose only allowlisted codes, never candidate paths, raw exception
 messages, or stacks. `pack:check` applies the same rules to the final npm path
