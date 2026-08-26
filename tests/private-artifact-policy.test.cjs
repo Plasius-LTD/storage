@@ -257,6 +257,104 @@ test("retains camel-word fallback after authoritative case-folded classification
   );
 });
 
+test("rejects wrapped direct record aliases independent of case transitions", () => {
+  const wrappers = concatenatedPolicyWrappers();
+  const protectedAliases = [
+    "signedcla",
+    "contributoracceptances",
+    "contributorsignatures",
+    "contributorsubmissions",
+    "signedcontributoragreement",
+    "contributorsignedagreement",
+    "contributoragreementsigned",
+    "contributoragreementsignature",
+  ];
+
+  for (const wrapper of wrappers) {
+    for (const alias of protectedAliases) {
+      const candidates = [
+        ...caseVariants(`${wrapper}${alias}`),
+        `${wrapper}${capitalize(alias)}`,
+        ...caseVariants(`${alias}${wrapper}`),
+        `${alias}${capitalize(wrapper)}`,
+      ];
+      for (const candidate of new Set(candidates)) {
+        const violations = findPrivateArtifactViolations([
+          `legal/${candidate}.bin`,
+        ]);
+        assert.equal(violations.length, 1, candidate);
+        assert.ok(
+          violations[0].ruleId === "signed-cla-storage" ||
+            violations[0].ruleId === "contributor-record-storage",
+          candidate
+        );
+      }
+    }
+  }
+});
+
+test("rejects concatenated plural CLA record categories across wrappers and case", () => {
+  const categories = [
+    "acceptance",
+    "acceptances",
+    "signature",
+    "signatures",
+    "submission",
+    "submissions",
+  ];
+
+  for (const category of categories) {
+    const pluralAlias = `clas${category}`;
+    const candidates = [
+      ...caseVariants(pluralAlias),
+      `CLAs${capitalize(category)}`,
+      `archive${pluralAlias}`,
+      `archiveCLAs${capitalize(category)}`,
+      `${pluralAlias}backup`,
+      `CLAs${capitalize(category)}Backup`,
+    ];
+    for (const candidate of new Set(candidates)) {
+      const violations = findPrivateArtifactViolations([
+        `legal/${candidate}.json`,
+      ]);
+      assert.equal(violations.length, 1, candidate);
+      assert.equal(violations[0].ruleId, "signed-cla-storage", candidate);
+    }
+  }
+});
+
+test("rejects wrapped separator-free registry marker pairs across case styles", () => {
+  const markerPairs = [
+    ["private", "registry", "private-registry"],
+    ["cla", "registry", "cla-contributor-registry"],
+    ["clas", "registry", "cla-contributor-registry"],
+    ["contributor", "registry", "cla-contributor-registry"],
+    ["contributors", "roster", "cla-contributor-registry"],
+  ];
+
+  for (const wrapper of concatenatedPolicyWrappers()) {
+    for (const [left, right, ruleId] of markerPairs) {
+      const aliases = [
+        `${wrapper}${left}${right}`,
+        `${left}${wrapper}${right}`,
+        `${left}${right}${wrapper}`,
+        `${wrapper}${right}${left}`,
+        `${right}${wrapper}${left}`,
+        `${right}${left}${wrapper}`,
+      ];
+      for (const alias of aliases) {
+        for (const candidate of caseVariants(alias)) {
+          const violations = findPrivateArtifactViolations([
+            `legal/${candidate}.json`,
+          ]);
+          assert.equal(violations.length, 1, candidate);
+          assert.equal(violations[0].ruleId, ruleId, candidate);
+        }
+      }
+    }
+  }
+});
+
 test("rejects mixed-case concatenated contributor record families", () => {
   const protectedAliases = [
     "contributoracceptances",
@@ -367,6 +465,17 @@ test("allows public CLA templates, contributor documentation, and benign technic
       "docs/signedclaimsprocess.md",
       "src/signedclassification.ts",
       "src/signedclasses.ts",
+      "docs/archiveSignedCLATemplate.md",
+      "docs/archivesignedclatemplate.md",
+      "src/backupContributorSignaturesSchema.ts",
+      "src/backupcontributorsignaturesschema.ts",
+      "docs/2026ContributorAcceptanceProcess.md",
+      "docs/2026contributoracceptanceprocess.md",
+      "src/CLAsSignaturesSchema.ts",
+      "src/classignaturesschema.ts",
+      "docs/copyrightsignedclauses.md",
+      "src/personalizationregistry.ts",
+      "src/classificationregistry.ts",
     ]),
     []
   );
@@ -619,6 +728,14 @@ test("repository gates reject staged contributor aliases without logging paths",
     "legal/CLA/signatures/record.pdf",
     "legal/signedclabackup.pdf",
     "legal/contributorsignaturesbackup.json",
+    "legal/archivesignedcla.bin",
+    "legal/backupcontributorsignatures.json",
+    "legal/2026contributoracceptances.json",
+    "legal/recordsignedcontributoragreement.pdf",
+    "legal/classignatures.json",
+    "legal/CLAsSubmissions.json",
+    "legal/privateRegistryBackup.json",
+    "legal/claRegistryBackup.json",
     "reports/windows-alias.csv. ",
   ];
   const legitimateControls = [
@@ -662,11 +779,13 @@ test("repository gates reject staged contributor aliases without logging paths",
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /csv-artifact: 1/u);
-    assert.match(result.stderr, /contributor-record-storage: 6/u);
-    assert.match(result.stderr, /signed-cla-storage: 3/u);
+    assert.match(result.stderr, /cla-contributor-registry: 1/u);
+    assert.match(result.stderr, /contributor-record-storage: 9/u);
+    assert.match(result.stderr, /private-registry: 1/u);
+    assert.match(result.stderr, /signed-cla-storage: 6/u);
     assert.doesNotMatch(
       result.stderr,
-      /legal\/|reports\/|windows-alias|signedcla|backup|acceptances|signatures|agreement|\.json|\.pdf|\.csv/u
+      /legal\/|reports\/|windows-alias|signedcla|backup|acceptances|signatures|submissions|agreement|\.bin|\.json|\.pdf|\.csv/iu
     );
   }
 });
@@ -742,4 +861,74 @@ function createTemporaryDirectory(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "private-artifact-policy-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
+}
+
+function concatenatedPolicyWrappers() {
+  return [
+    "acceptance",
+    "acceptances",
+    "archive",
+    "archives",
+    "backup",
+    "backups",
+    "copy",
+    "copies",
+    "executed",
+    "final",
+    "record",
+    "records",
+    "signature",
+    "signatures",
+    "signed",
+    "storage",
+    "submission",
+    "submissions",
+    "process",
+    "template",
+    "templates",
+    "policy",
+    "policies",
+    "guide",
+    "guides",
+    "guidance",
+    "documentation",
+    "doc",
+    "docs",
+    "instruction",
+    "instructions",
+    "example",
+    "examples",
+    "schema",
+    "schemas",
+    "validator",
+    "validators",
+    "format",
+    "formats",
+    "spec",
+    "specs",
+    "specification",
+    "specifications",
+    "v1",
+    "1",
+    "2026",
+    "archive2026backup",
+    "v2records",
+  ];
+}
+
+function caseVariants(value) {
+  return [
+    value.toLocaleLowerCase("en-US"),
+    value.toLocaleUpperCase("en-US"),
+    value
+      .split("")
+      .map((character, index) =>
+        index % 2 === 0 ? character.toLocaleUpperCase("en-US") : character
+      )
+      .join(""),
+  ];
+}
+
+function capitalize(value) {
+  return `${value[0].toLocaleUpperCase("en-US")}${value.slice(1)}`;
 }

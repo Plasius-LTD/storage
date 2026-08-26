@@ -34,9 +34,12 @@ enforcement boundaries:
    separator-free terms. Direct aliases are also classified through an ASCII
    case-folded representation independent of camel-case transitions, and both
    singular and plural CLA boundaries recognise every protected concatenated
-   suffix family. Unicode NFKC normalization runs before structural path
-   handling so compatibility separators, Windows and POSIX separators, and the
-   optional npm `package/` prefix reduce to one representation. Explicit
+   suffix family. A closed semantic vocabulary segments recognised archive,
+   backup, record, storage, documentation, and version wrappers before direct
+   aliases and around registry marker pairs; arbitrary substring prefixes do
+   not qualify. Unicode NFKC normalization runs before structural path handling
+   so compatibility separators, Windows and POSIX separators, and the optional
+   npm `package/` prefix reduce to one representation. Explicit
    process, template, policy, schema, and validator files remain public, but a
    matching component used as a directory fails closed. A separate
    classification copy removes Windows-ignored trailing dots and spaces from

@@ -29,6 +29,55 @@ const REGISTRY_MARKERS = new Set([
 
 const CLA_MARKERS = new Set(["cla", "clas", "contributor", "contributors"]);
 
+// These words may wrap a protected separator-free record/registry alias. Keep
+// this vocabulary closed so ordinary words containing a protected substring
+// (for example, "unsignedcla" or "personalizationregistry") remain public.
+const CONCATENATED_POLICY_WRAPPER_WORDS = Object.freeze([
+  "acceptance",
+  "acceptances",
+  "archive",
+  "archives",
+  "backup",
+  "backups",
+  "copy",
+  "copies",
+  "executed",
+  "final",
+  "record",
+  "records",
+  "signature",
+  "signatures",
+  "signed",
+  "storage",
+  "submission",
+  "submissions",
+  "process",
+  "template",
+  "templates",
+  "policy",
+  "policies",
+  "guide",
+  "guides",
+  "guidance",
+  "documentation",
+  "doc",
+  "docs",
+  "instruction",
+  "instructions",
+  "example",
+  "examples",
+  "schema",
+  "schemas",
+  "validator",
+  "validators",
+  "format",
+  "formats",
+  "spec",
+  "specs",
+  "specification",
+  "specifications",
+]);
+
 const CONCATENATED_RECORD_SUFFIX_PATTERN =
   "(?:acceptances?|archives?|backups?|cop(?:y|ies)|executed|final|records?|signatures?|signed|storage|submissions?|process|templates?|polic(?:y|ies)|guides?|guidance|documentation|docs?|instructions?|examples?|schemas?|validators?|formats?|spec(?:ification)?s?|v?[0-9])";
 
@@ -37,12 +86,12 @@ const CONCATENATED_RECORD_SUFFIX_PATTERN =
 const CLA_RECORD_TERM_PATTERN = String.raw`cla(?:(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN})|s(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN}))`;
 
 const CONTRIBUTOR_PRIVATE_RECORD_PATTERN = new RegExp(
-  String.raw`(?:^|[^a-z0-9])(?:(?:contributors?[^a-z0-9]*(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]*contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*signed[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN})[^a-z0-9]*(?:signed|signatures?)))`,
+  String.raw`(?:(?:contributors?[^a-z0-9]*(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]*contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*signed[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN})[^a-z0-9]*(?:signed|signatures?)))`,
   "giu"
 );
 
 const SIGNED_CLA_PRIVATE_RECORD_PATTERN = new RegExp(
-  String.raw`(?:^|[^a-z0-9])(?:(?:signed[^a-z0-9]*${CLA_RECORD_TERM_PATTERN})|(?:cla[^a-z0-9]*(?:acceptances?|signatures?|submissions?)))`,
+  String.raw`(?:(?:signed[^a-z0-9]*${CLA_RECORD_TERM_PATTERN})|(?:${CLA_RECORD_TERM_PATTERN}[^a-z0-9]*(?:acceptances?|signatures?|submissions?)))`,
   "giu"
 );
 
@@ -235,6 +284,9 @@ function matchesDirectPrivateRecordStorage(artifactPath, pattern) {
 function classifyDirectRecordPath(semanticPath, pattern) {
   let matchedProtectedPhrase = false;
   for (const match of semanticPath.matchAll(pattern)) {
+    if (!hasRecognizedConcatenatedPrefix(semanticPath, match.index)) {
+      continue;
+    }
     matchedProtectedPhrase = true;
     const phraseEnd = match.index + match[0].length;
     const nextSeparator = semanticPath.indexOf("/", phraseEnd);
@@ -261,6 +313,59 @@ function classifyDirectRecordPath(semanticPath, pattern) {
   }
 
   return matchedProtectedPhrase ? false : undefined;
+}
+
+/**
+ * Require any alphanumeric text immediately before a direct protected phrase
+ * to consist entirely of the closed wrapper vocabulary (or version digits).
+ * This catches archive/backup/year prefixes without treating arbitrary word
+ * substrings as protected records.
+ *
+ * @param {string} semanticPath
+ * @param {number} phraseStart
+ * @returns {boolean}
+ */
+function hasRecognizedConcatenatedPrefix(semanticPath, phraseStart) {
+  let runStart = phraseStart;
+  while (runStart > 0 && /[a-z0-9]/iu.test(semanticPath[runStart - 1])) {
+    runStart -= 1;
+  }
+
+  return canSegmentConcatenatedWrappers(
+    semanticPath.slice(runStart, phraseStart).toLocaleLowerCase("en-US")
+  );
+}
+
+/**
+ * Segment a complete separator-free value using only approved wrapper words
+ * and numeric/version markers. Dynamic programming preserves overlapping
+ * singular/plural alternatives without relying on case transitions.
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+function canSegmentConcatenatedWrappers(value) {
+  const reachable = new Uint8Array(value.length + 1);
+  reachable[0] = 1;
+
+  for (let index = 0; index < value.length; index += 1) {
+    if (!reachable[index]) {
+      continue;
+    }
+
+    for (const word of CONCATENATED_POLICY_WRAPPER_WORDS) {
+      if (value.startsWith(word, index)) {
+        reachable[index + word.length] = 1;
+      }
+    }
+
+    const numericEnd = consumeNumericWrapper(value, index);
+    if (numericEnd !== undefined) {
+      reachable[numericEnd] = 1;
+    }
+  }
+
+  return reachable[value.length] === 1;
 }
 
 /**
@@ -719,17 +824,80 @@ function hasMarkerPair(tokens, leftMarkers, rightMarkers) {
     return true;
   }
 
-  for (const token of tokens) {
-    for (const left of leftMarkers) {
-      for (const right of rightMarkers) {
-        if (token === `${left}${right}` || token === `${right}${left}`) {
-          return true;
-        }
+  return tokens.some((token) =>
+    hasSegmentedMarkerPair(token, leftMarkers, rightMarkers)
+  );
+}
+
+/**
+ * Segment the complete token through marker and closed wrapper vocabularies.
+ * A two-bit state records whether each required marker family was observed,
+ * allowing approved wrappers before, between, or after the pair.
+ *
+ * @param {string} token
+ * @param {Set<string>} leftMarkers
+ * @param {Set<string>} rightMarkers
+ * @returns {boolean}
+ */
+function hasSegmentedMarkerPair(token, leftMarkers, rightMarkers) {
+  const words = new Set([
+    ...CONCATENATED_POLICY_WRAPPER_WORDS,
+    ...leftMarkers,
+    ...rightMarkers,
+  ]);
+  const statesByOffset = Array.from(
+    { length: token.length + 1 },
+    () => new Set()
+  );
+  statesByOffset[0].add(0);
+
+  for (let index = 0; index < token.length; index += 1) {
+    if (statesByOffset[index].size === 0) {
+      continue;
+    }
+
+    for (const word of words) {
+      if (!token.startsWith(word, index)) {
+        continue;
+      }
+      let markerState = 0;
+      if (leftMarkers.has(word)) markerState |= 1;
+      if (rightMarkers.has(word)) markerState |= 2;
+      for (const state of statesByOffset[index]) {
+        statesByOffset[index + word.length].add(state | markerState);
+      }
+    }
+
+    const numericEnd = consumeNumericWrapper(token, index);
+    if (numericEnd !== undefined) {
+      for (const state of statesByOffset[index]) {
+        statesByOffset[numericEnd].add(state);
       }
     }
   }
 
-  return false;
+  return statesByOffset[token.length].has(3);
+}
+
+/**
+ * Consume a complete decimal run, optionally prefixed by a version "v".
+ *
+ * @param {string} value
+ * @param {number} start
+ * @returns {number | undefined}
+ */
+function consumeNumericWrapper(value, start) {
+  let index = start;
+  if (value[index] === "v" && /[0-9]/u.test(value[index + 1] ?? "")) {
+    index += 1;
+  }
+  if (!/[0-9]/u.test(value[index] ?? "")) {
+    return undefined;
+  }
+  while (/[0-9]/u.test(value[index] ?? "")) {
+    index += 1;
+  }
+  return index;
 }
 
 function compareViolations(left, right) {
