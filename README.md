@@ -318,18 +318,29 @@ npm run pack:check
 Signed contributor agreements and contributor acceptance records are retained
 in an approved access-controlled system outside source control. A
 zero-dependency policy gate inspects repository and Git-index path metadata
-only; it never opens or hashes a suspected private artifact.
+only; it never opens or hashes a suspected private artifact, and rejection
+messages expose rule counts rather than suspected path values.
 
 `privacy:check` rejects protected paths in the working tree and proposed Git
-index. `pack:check` applies the same rules to the final npm path manifest,
+index. This includes contributor acceptance, signature, submission, and signed
+agreement record aliases across hierarchical, Windows, and Unicode
+compatibility path forms. Explicit process, template, policy, schema, and
+validator documents remain public only when they are files, not record
+directories. `pack:check` applies the same rules to the final npm path manifest,
 requires the explicit `package.json.files` allowlist, and rejects any package
-path not present in the exact public-package allowlist. Public CLA templates
-remain distributable, but broad legal-directory entries are forbidden.
+path not present in the exact public-package allowlist. Raw package identities
+and cardinality are retained so Unicode-normalized aliases or duplicate members
+cannot disappear into the allowlist comparison. Public CLA templates remain
+distributable, but broad legal-directory entries are forbidden.
 
-CI runs the path and package gates, and release preparation and publishing fail
-closed when either policy fails. These targeted controls are defense in depth;
-they do not replace organisation-wide secret scanning, access control, or
-incident response.
+Every requested npm package inventory is evaluated by the same private-path
+classifier, including packages rooted below otherwise excluded tool/cache
+directories. CI runs the path and package gates, and release preparation and
+publishing fail closed when either policy fails. Node's built-in coverage is
+exported to LCOV and combined with package coverage so each executable policy
+boundary remains visible to review. These targeted controls are defense in
+depth; they do not replace organisation-wide secret scanning, access control,
+or incident response.
 
 ## Governance
 

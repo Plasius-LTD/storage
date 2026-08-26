@@ -29,6 +29,14 @@ const REGISTRY_MARKERS = new Set([
 
 const CLA_MARKERS = new Set(["cla", "clas", "contributor", "contributors"]);
 
+const CONTRIBUTOR_PRIVATE_RECORD_PATTERN =
+  /(?:^|[^a-z0-9])(?:(?:contributors?[^a-z0-9]+(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]+contributors?[^a-z0-9]+(?:agreements?|clas?))|(?:contributors?[^a-z0-9]+signed[^a-z0-9]+(?:agreements?|clas?))|(?:contributors?[^a-z0-9]+(?:agreements?|clas?)[^a-z0-9]+(?:signed|signatures?)))(?=$|[^a-z0-9])/giu;
+
+const PUBLIC_CONTRIBUTOR_DOCUMENT_QUALIFIER_PATTERNS = Object.freeze([
+  /^[^a-z0-9]+(?:process|template|policy|guides?|guidance|documentation|docs?|instructions?|examples?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:md|mdx|rst|adoc|txt|pdf)$/iu,
+  /^[^a-z0-9]+(?:schema|validator|formats?|spec(?:ification)?s?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:[cm]?[jt]sx?|d\.[cm]?[jt]s|mdx?|json|ya?ml)$/iu,
+]);
+
 const BROAD_PACKAGE_FILE_ENTRIES = new Set([
   "",
   ".",
@@ -54,6 +62,12 @@ const PRIVATE_ARTIFACT_RULES = Object.freeze([
       "Contributor and CLA acceptance registries must remain in approved private systems.",
     matches: (_artifactPath, tokens) =>
       hasMarkerPair(tokens, CLA_MARKERS, REGISTRY_MARKERS),
+  }),
+  Object.freeze({
+    id: "contributor-record-storage",
+    description:
+      "Signed contributor agreements and contributor acceptance, signature, or submission records must remain in approved private systems.",
+    matches: (artifactPath) => matchesContributorRecordStorage(artifactPath),
   }),
   Object.freeze({
     id: "signed-cla-storage",
@@ -86,7 +100,13 @@ function normalizeArtifactPath(artifactPath) {
     throw new TypeError("Artifact paths must be strings.");
   }
 
-  let normalized = path.posix.normalize(artifactPath.replace(/\\/gu, "/"));
+  const compatibilityNormalized = artifactPath.normalize("NFKC");
+  let normalized = path.posix.normalize(
+    path.posix
+      .normalize(compatibilityNormalized.replace(/\\/gu, "/"))
+      .normalize("NFKC")
+      .replace(/\\/gu, "/")
+  );
   if (normalized === ".") {
     return "";
   }
@@ -99,6 +119,114 @@ function normalizeArtifactPath(artifactPath) {
   }
 
   return normalized;
+}
+
+/**
+ * Classify contributor record categories while retaining explicit public
+ * process, template, schema, validator, and policy documents. A matching
+ * category used as a directory remains private regardless of its suffix.
+ *
+ * @param {string} artifactPath
+ * @returns {boolean}
+ */
+function matchesContributorRecordStorage(artifactPath) {
+  for (const match of artifactPath.matchAll(CONTRIBUTOR_PRIVATE_RECORD_PATTERN)) {
+    const phraseEnd = match.index + match[0].length;
+    const nextSeparator = artifactPath.indexOf("/", phraseEnd);
+    const componentSuffix = artifactPath.slice(
+      phraseEnd,
+      nextSeparator === -1 ? artifactPath.length : nextSeparator
+    );
+    const isPublicDocumentation =
+      nextSeparator === -1 &&
+      PUBLIC_CONTRIBUTOR_DOCUMENT_QUALIFIER_PATTERNS.some((pattern) =>
+        pattern.test(componentSuffix)
+      );
+    if (!isPublicDocumentation) {
+      return true;
+    }
+  }
+
+  return matchesHierarchicalContributorRecordStorage(artifactPath);
+}
+
+/**
+ * Detect record-category layouts whose semantic terms are separated by one or
+ * more intermediate path components. Public-document exceptions apply only to
+ * terminal filenames, so a category expressed across directories fails closed.
+ *
+ * @param {string} artifactPath
+ * @returns {boolean}
+ */
+function matchesHierarchicalContributorRecordStorage(artifactPath) {
+  const words = artifactPath.split("/").flatMap((component, componentIndex) =>
+    component
+      .toLocaleLowerCase("en-US")
+      .split(/[^a-z0-9]+/u)
+      .filter(Boolean)
+      .map((word) => ({ componentIndex, word }))
+  );
+  const isContributor = (word) =>
+    word === "contributor" || word === "contributors";
+  const isRecordCategory = (word) =>
+    word === "acceptance" ||
+    word === "acceptances" ||
+    word === "signature" ||
+    word === "signatures" ||
+    word === "submission" ||
+    word === "submissions";
+  const isSigned = (word) => word === "signed";
+  const isAgreement = (word) =>
+    word === "agreement" ||
+    word === "agreements" ||
+    word === "cla" ||
+    word === "clas";
+  const isSignedOrSignature = (word) =>
+    isSigned(word) || word === "signature" || word === "signatures";
+
+  return [
+    [isContributor, isRecordCategory],
+    [isSigned, isContributor, isAgreement],
+    [isContributor, isSigned, isAgreement],
+    [isContributor, isAgreement, isSignedOrSignature],
+  ].some((sequence) => hasCrossComponentSequence(words, sequence));
+}
+
+/**
+ * Match an ordered semantic sequence in linear time and require it to span at
+ * least two path components. Descending stage updates prevent one word from
+ * satisfying more than one sequence position.
+ *
+ * @param {Array<{componentIndex: number, word: string}>} words
+ * @param {Array<(word: string) => boolean>} sequence
+ * @returns {boolean}
+ */
+function hasCrossComponentSequence(words, sequence) {
+  const earliestStartByStage = Array(sequence.length).fill(undefined);
+
+  for (const { componentIndex, word } of words) {
+    for (let stage = sequence.length - 1; stage >= 0; stage -= 1) {
+      if (!sequence[stage](word)) {
+        continue;
+      }
+
+      if (stage === 0) {
+        earliestStartByStage[0] ??= componentIndex;
+        continue;
+      }
+
+      const startComponent = earliestStartByStage[stage - 1];
+      if (startComponent === undefined) {
+        continue;
+      }
+      if (stage === sequence.length - 1 && startComponent < componentIndex) {
+        return true;
+      }
+      earliestStartByStage[stage] ??= startComponent;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -268,17 +396,89 @@ function findPackageFilesPolicyViolations(files) {
  * @returns {{missingPaths: string[], unexpectedPaths: string[]}}
  */
 function compareExactPathAllowlist(actualPaths, allowedPaths) {
-  const actual = new Set(
-    [...actualPaths].map(normalizeArtifactPath).filter(Boolean)
-  );
-  const allowed = new Set(
-    [...allowedPaths].map(normalizeArtifactPath).filter(Boolean)
-  );
+  const actualInventory = createExactPathInventory(actualPaths);
+  const allowedInventory = createExactPathInventory(allowedPaths);
+
+  for (const [normalizedPath, rawPath] of actualInventory.rawByNormalizedPath) {
+    if (
+      allowedInventory.rawByNormalizedPath.has(normalizedPath) &&
+      allowedInventory.rawByNormalizedPath.get(normalizedPath) !== rawPath
+    ) {
+      throwRawArtifactIdentityError();
+    }
+  }
+
+  const actual = new Set(actualInventory.rawByNormalizedPath.keys());
+  const allowed = new Set(allowedInventory.rawByNormalizedPath.keys());
 
   return {
     missingPaths: sortPaths([...allowed].filter((entry) => !actual.has(entry))),
     unexpectedPaths: sortPaths([...actual].filter((entry) => !allowed.has(entry))),
   };
+}
+
+/**
+ * Retain collision-free, prefix-stripped raw identities beside their canonical
+ * policy paths. Rejected raw values are deliberately absent from errors.
+ *
+ * @param {Iterable<string>} artifactPaths
+ * @returns {{rawPaths: Set<string>, rawByNormalizedPath: Map<string, string>}}
+ */
+function createExactPathInventory(artifactPaths) {
+  const rawPaths = new Set();
+  const rawByNormalizedPath = new Map();
+
+  for (const entry of artifactPaths) {
+    if (typeof entry !== "string") {
+      throw new TypeError("Artifact paths must be strings.");
+    }
+
+    const rawPath = entry.startsWith("package/")
+      ? entry.slice("package/".length)
+      : entry;
+    if (rawPaths.has(rawPath)) {
+      throwRawArtifactIdentityError();
+    }
+    rawPaths.add(rawPath);
+
+    const normalizedPath = normalizeArtifactPath(entry);
+    if (!normalizedPath) {
+      continue;
+    }
+    if (
+      rawByNormalizedPath.has(normalizedPath) &&
+      rawByNormalizedPath.get(normalizedPath) !== rawPath
+    ) {
+      throwRawArtifactIdentityError();
+    }
+    rawByNormalizedPath.set(normalizedPath, rawPath);
+  }
+
+  return { rawPaths, rawByNormalizedPath };
+}
+
+function throwRawArtifactIdentityError() {
+  throw new Error(
+    "Packed paths failed raw artifact identity or cardinality checks; values were not logged."
+  );
+}
+
+/**
+ * Summarize violations without exposing a suspected private path value.
+ *
+ * @param {Iterable<{ruleId: string}>} violations
+ * @returns {string}
+ */
+function summarizePrivateArtifactViolations(violations) {
+  const counts = new Map();
+  for (const { ruleId } of violations) {
+    counts.set(ruleId, (counts.get(ruleId) ?? 0) + 1);
+  }
+
+  return [...counts]
+    .sort(([left], [right]) => left.localeCompare(right, "en-US"))
+    .map(([ruleId, count]) => `${ruleId}: ${count}`)
+    .join(", ");
 }
 
 function normalizePackageFilesEntry(entry) {
@@ -341,4 +541,5 @@ module.exports = {
   findPrivateArtifactViolations,
   normalizeArtifactPath,
   PRIVATE_ARTIFACT_RULES,
+  summarizePrivateArtifactViolations,
 };

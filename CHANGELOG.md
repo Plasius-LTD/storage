@@ -25,6 +25,15 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     prevent tabular exports, contributor registries, signed CLA artifacts, and
     privacy-marked registries from entering source control or release artifacts
     without inspecting candidate file contents.
+  - Reject contributor acceptance, signature, submission, and signed-agreement
+    record aliases across hierarchical, Windows, and Unicode compatibility path
+    forms while retaining explicit public contributor documentation files.
+  - Keep raw package-member identity and cardinality alongside normalized paths,
+    and report rejected private-path categories by count without logging path
+    values.
+  - Apply the shared contributor-record classifier to every requested npm
+    inventory, including package roots beneath excluded tool/cache directories,
+    and include every changed gate executable in combined LCOV.
   - Restricted the npm package manifest to an explicit allowlist and exact
     public CLA documents, with the final packed path manifest checked in CI and
     CD before publication.

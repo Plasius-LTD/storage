@@ -27,17 +27,28 @@ enforcement boundaries:
    union is intentional: a tracked path deleted only from the working tree
    continues to fail until its deletion is staged in the proposed commit.
 2. The policy rejects every `.csv` extension case-insensitively, CLA or
-   contributor registries with any extension, signed-CLA storage paths, and
-   paths that combine a privacy marker with a registry marker. Windows and
-   POSIX separators and the optional npm `package/` prefix normalize to one
-   representation.
+   contributor registries with any extension, signed-CLA storage paths,
+   contributor acceptance/signature/submission record aliases, signed
+   contributor agreement aliases, and paths that combine a privacy marker with
+   a registry marker. Unicode NFKC normalization runs before structural path
+   handling so compatibility separators, Windows and POSIX separators, and the
+   optional npm `package/` prefix reduce to one representation. Explicit
+   process, template, policy, schema, and validator files remain public, but a
+   matching component used as a directory fails closed.
 3. `package.json.files` must be a non-empty explicit allowlist. Repository-root,
    wildcard, and complete `legal` directory entries are forbidden; only the
    exact public CLA Markdown documents are included.
 4. `pack:check` first repeats the repository policy, then applies the same
    private-path rules and an exact public-path allowlist to the final manifest
-   produced by `npm pack --json --ignore-scripts`. The temporary tarball and npm
-   cache are removed in a `finally` block.
+   produced by `npm pack --json --ignore-scripts`. Raw package-member identities
+   and cardinality remain alongside normalized forms so compatibility aliases
+   and duplicates cannot collapse into the allowlist. The temporary tarball and
+   npm cache are removed in a `finally` block.
+5. Every package directory requested through the public-artifact verifier has
+   its npm inventory classified by the shared rules even when its source root is
+   below an excluded cache or tool directory. Policy tests export built-in Node
+   coverage to LCOV and combine it with runtime-package coverage so all gate
+   executables remain represented in the release evidence.
 
 The policy and tests use Node.js built-ins only. CI executes the repository gate
 before dependency installation, then runs the policy tests and final package
@@ -65,7 +76,7 @@ privacy control must not be remotely bypassable.
 ## Consequences
 
 - Repository and package validation fail closed on protected paths without
-  reading candidate contents.
+  reading candidate contents or logging suspected path values.
 - Public package surface changes require an intentional exact-allowlist update.
 - New protected path categories require a policy and regression-test update.
 - The targeted path rules complement rather than replace secret scanning,

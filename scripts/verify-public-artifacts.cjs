@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
   collectRepositoryArtifactPaths,
   findPrivateArtifactViolations,
+  summarizePrivateArtifactViolations,
 } = require("./private-artifact-policy.cjs");
 
 const PROHIBITED = "legal/cla-registry.csv";
@@ -141,13 +142,13 @@ function validatePackage(root, packageDirectory) {
   if (!Array.isArray(files)) {
     throw new Error("npm pack result did not include a file inventory.");
   }
-  const matches = files
+  const artifactPaths = files
     .map((entry) => entry?.path)
-    .filter((entry) => typeof entry === "string")
-    .filter((entry) => normalizeArtifactPath(entry) === PROHIBITED);
-  if (matches.length > 0) {
+    .filter((entry) => typeof entry === "string");
+  const violations = findPrivateArtifactViolations(artifactPaths);
+  if (violations.length > 0) {
     throw new Error(
-      `npm package inventory contains prohibited path metadata: ${matches.join(", ")}`
+      `npm package inventory contains prohibited path metadata (${summarizePrivateArtifactViolations(violations)}); values were not logged.`
     );
   }
 }
@@ -163,7 +164,7 @@ function main() {
   const sourceMatches = collectSourceMatches(root);
   if (sourceMatches.length > 0) {
     throw new Error(
-      `Source contains prohibited path metadata: ${sourceMatches.join(", ")}`
+      `Source contains prohibited path metadata (${sourceMatches.length} match(es)); values were not logged.`
     );
   }
 
@@ -185,9 +186,7 @@ function enforcePrivateArtifactPolicy(root) {
   );
   if (violations.length > 0) {
     throw new Error(
-      `Private artifact policy failed; file contents were not inspected:\n${violations
-        .map((violation) => `- ${violation.artifactPath} (${violation.ruleId})`)
-        .join("\n")}`
+      `Private artifact policy failed (${summarizePrivateArtifactViolations(violations)}); file contents and path values were not logged.`
     );
   }
 }

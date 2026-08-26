@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -23,6 +23,18 @@ test("normalizes platform separators and an optional npm package prefix", () => 
     normalizeArtifactPath("package/src/../legal/PRIVATE-ROSTER.txt"),
     "legal/PRIVATE-ROSTER.txt"
   );
+});
+
+test("normalizes compatibility separators before structural path handling", () => {
+  for (const candidate of [
+    "legal/ＣＯＮＴＲＩＢＵＴＯＲ／ＡＣＣＥＰＴＡＮＣＥＳ／record.json",
+    "legal/signed＼contributor＼agreement.pdf",
+    "legal/signed﹨contributor﹨agreement.pdf",
+  ]) {
+    const normalized = normalizeArtifactPath(candidate);
+    assert.ok(!/[\\／＼﹨]/u.test(normalized), candidate);
+    assert.equal(normalizeArtifactPath(normalized), normalized, candidate);
+  }
 });
 
 test("rejects every CSV extension case-insensitively", () => {
@@ -69,7 +81,46 @@ test("rejects privacy-marked registry paths and signed CLA storage", () => {
   );
 });
 
-test("allows public CLA templates and benign technical registries", () => {
+test("rejects contributor record and signed agreement aliases", () => {
+  const protectedPaths = [
+    "legal/contributor-acceptances.json",
+    "legal/contributor-signatures.json",
+    "legal/contributor-submission.pdf",
+    "legal/contributor/acceptances/record.json",
+    "legal/contributors/signature/record.pdf",
+    "legal/signed-contributor-agreement.pdf",
+    "legal/signed/contributor/agreements/record.pdf",
+    "legal/contributor-signed-agreement.pdf",
+    "legal/contributor/agreement/signed.pdf",
+    "legal/contributor-agreement-signature.pdf",
+    "legal/contributor-acceptances-2026.json",
+    "legal/contributor-signature-backup.json",
+    "legal/signed-contributor-agreement-backup.pdf",
+    "legal/contributor-acceptance-process.json",
+    "legal/contributor-signature-schema.pdf",
+    "legal/contributor-acceptance-process/SYNTHETIC-RECORD.pdf",
+    "legal/contributors/2026/acceptances.json",
+    "legal/contributor/archive/signatures/record.json",
+    "legal/signed/contributor/2026/agreement.pdf",
+    "legal/contributor+acceptances.json",
+    "legal/contributor‑acceptances.json",
+    "legal/contributor-acceptances~backup.json",
+    "legal/signed+contributor+agreement.pdf",
+    "legal/ＣＯＮＴＲＩＢＵＴＯＲ／ＡＣＣＥＰＴＡＮＣＥＳ／record.json",
+    "legal/signed＼contributor＼agreement.pdf",
+    "legal/signed﹨contributor﹨agreement.pdf",
+    "docs/contributor-acceptance-process/legal/contributor-signatures.json",
+    "package/legal/contributor-signatures.json",
+  ];
+
+  for (const candidate of protectedPaths) {
+    const violations = findPrivateArtifactViolations([candidate]);
+    assert.equal(violations.length, 1, candidate);
+    assert.equal(violations[0].ruleId, "contributor-record-storage", candidate);
+  }
+});
+
+test("allows public CLA templates, contributor documentation, and benign technical registries", () => {
   assert.deepEqual(
     findPrivateArtifactViolations([
       "CONTRIBUTORS.md",
@@ -78,9 +129,106 @@ test("allows public CLA templates and benign technical registries", () => {
       "legal/CORPORATE_CLA.md",
       "src/mcp-admin-registry.ts",
       "docs/cla-signing-process.md",
+      "docs/contributor-acceptance-process.md",
+      "docs/contributor-acceptance-process-v2.md",
+      "docs/signed-contributor-agreement-template.md",
+      "docs/contributor-submission-policy.md",
+      "src/cla-signature-schema.ts",
+      "src/contributor-signature-schema.ts",
+      "src/contributor-signature-schema-v2.ts",
+      "src/contributor-submission-validator.ts",
+      "src/contributor-acceptance-format.ts",
+      "docs/contributor+acceptance+process.md",
+      "src/contributor+signature+schema.ts",
     ]),
     []
   );
+});
+
+test("package inventory uses the shared contributor-record policy", (t) => {
+  const root = createTemporaryDirectory(t);
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+
+  const packageRoot = path.join(root, ".cache", "pkg");
+  fs.mkdirSync(path.join(packageRoot, "legal"), { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "package.json"),
+    `${JSON.stringify({
+      name: "synthetic-private-package",
+      version: "1.0.0",
+      files: ["legal"],
+    })}\n`,
+    "utf8"
+  );
+  fs.closeSync(
+    fs.openSync(path.join(packageRoot, "legal", "contributor-signatures.json"), "w")
+  );
+
+  const verifier = path.resolve(
+    __dirname,
+    "../scripts/verify-public-artifacts.cjs"
+  );
+  const result = spawnSync(
+    process.execPath,
+    [verifier, "--package-dir", ".cache/pkg"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        npm_config_cache: path.join(root, ".npm-cache"),
+      },
+    }
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /contributor-record-storage: 1/u);
+  assert.doesNotMatch(
+    result.stderr,
+    /\.cache|legal\/|signatures|\.json/u
+  );
+});
+
+test(
+  "installed coverage run exercises the complete public package verifier",
+  {
+    skip: process.env.npm_lifecycle_event !== "test:privacy:lcov",
+    timeout: 120_000,
+  },
+  () => {
+    const verifier = path.resolve(
+      __dirname,
+      "../scripts/verify-public-package.cjs"
+    );
+    const result = spawnSync(process.execPath, [verifier], {
+      cwd: path.resolve(__dirname, ".."),
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 120_000,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Public package check passed/u);
+  }
+);
+
+test("rejects public-document qualifiers used as private-record directories", () => {
+  const protectedPaths = [
+    "docs/contributor-acceptance-process.md/SYNTHETIC-RECORD.pdf",
+    "docs/contributor-acceptance-process-v2.md/SYNTHETIC-RECORD.pdf",
+    "docs/signed-contributor-agreement-template.md/SYNTHETIC-RECORD.pdf",
+    "docs/contributor-submission-policy.md/SYNTHETIC-RECORD.pdf",
+    "src/contributor-signature-schema.ts/SYNTHETIC-RECORD.pdf",
+    "src/contributor-signature-schema-v2.ts/SYNTHETIC-RECORD.pdf",
+    "src/contributor-submission-validator.ts/SYNTHETIC-RECORD.pdf",
+    "src/contributor-acceptance-format.ts/SYNTHETIC-RECORD.pdf",
+  ];
+
+  for (const candidate of protectedPaths) {
+    const violations = findPrivateArtifactViolations([candidate]);
+    assert.equal(violations.length, 1, candidate);
+    assert.equal(violations[0].ruleId, "contributor-record-storage", candidate);
+  }
 });
 
 test("working-tree discovery is path-only and skips dependency metadata", (t) => {
@@ -130,6 +278,61 @@ test("repository discovery retains tracked paths after an unstaged deletion", (t
   );
 });
 
+test("repository gates reject staged contributor aliases without logging paths", (t) => {
+  const root = createTemporaryDirectory(t);
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+
+  const protectedAliases = [
+    "legal/contributor-acceptances.json",
+    "legal/contributor-signatures.json",
+    "legal/signed-contributor-agreement.pdf",
+  ];
+  const legitimateControls = [
+    "docs/contributor-acceptance-process.md",
+    "docs/signed-contributor-agreement-template.md",
+    "src/contributor-signature-schema.ts",
+  ];
+  for (const artifactPath of [...protectedAliases, ...legitimateControls]) {
+    const absolutePath = path.join(root, artifactPath);
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.closeSync(fs.openSync(absolutePath, "w"));
+  }
+  execFileSync("git", ["add", "-f", "--all"], { cwd: root });
+
+  const verifiers = [
+    {
+      args: [
+        path.resolve(__dirname, "../scripts/verify-private-artifacts.cjs"),
+        root,
+      ],
+      cwd: process.cwd(),
+    },
+    {
+      args: [
+        path.resolve(__dirname, "../scripts/verify-public-artifacts.cjs"),
+      ],
+      cwd: root,
+    },
+    {
+      args: [path.resolve(__dirname, "../scripts/verify-public-package.cjs")],
+      cwd: root,
+    },
+  ];
+  for (const { args, cwd } of verifiers) {
+    const result = spawnSync(process.execPath, args, {
+      cwd,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /contributor-record-storage: 3/u);
+    assert.doesNotMatch(
+      result.stderr,
+      /legal\/|acceptances|signatures|agreement|\.json|\.pdf/u
+    );
+  }
+});
+
 test("requires an explicit package files allowlist and rejects broad entries", () => {
   assert.equal(findPackageFilesPolicyViolations(undefined)[0].ruleId, "explicit-files-required");
   assert.equal(findPackageFilesPolicyViolations([])[0].ruleId, "explicit-files-required");
@@ -168,6 +371,24 @@ test("compares the final npm path manifest with an exact allowlist", () => {
       missingPaths: ["README.md"],
       unexpectedPaths: ["extra.txt"],
     }
+  );
+});
+
+test("rejects duplicate and normalization-colliding raw package members", () => {
+  for (const actualPaths of [
+    ["package/README.md", "package/ＲEADME.md"],
+    ["package/ＲEADME.md"],
+    ["package/README.md", "package/README.md"],
+  ]) {
+    assert.throws(
+      () => compareExactPathAllowlist(actualPaths, ["README.md"]),
+      /raw artifact identity or cardinality/u
+    );
+  }
+
+  assert.deepEqual(
+    compareExactPathAllowlist(["package/README.md"], ["README.md"]),
+    { missingPaths: [], unexpectedPaths: [] }
   );
 });
 

@@ -4,6 +4,7 @@ const path = require("node:path");
 const {
   collectRepositoryArtifactPaths,
   findPrivateArtifactViolations,
+  summarizePrivateArtifactViolations,
 } = require("./private-artifact-policy.cjs");
 
 function main(argv = process.argv.slice(2)) {
@@ -20,9 +21,7 @@ function main(argv = process.argv.slice(2)) {
     console.error(
       "Private artifact policy failed. Prohibited paths were found; file contents were not inspected:"
     );
-    for (const violation of violations) {
-      console.error(`- ${violation.artifactPath} (${violation.ruleId})`);
-    }
+    console.error(`- ${summarizePrivateArtifactViolations(violations)}`);
     return 1;
   }
 
