@@ -32,7 +32,9 @@ const CLA_MARKERS = new Set(["cla", "clas", "contributor", "contributors"]);
 const CONCATENATED_RECORD_SUFFIX_PATTERN =
   "(?:acceptances?|archives?|backups?|cop(?:y|ies)|executed|final|records?|signatures?|signed|storage|submissions?|process|templates?|polic(?:y|ies)|guides?|guidance|documentation|docs?|instructions?|examples?|schemas?|validators?|formats?|spec(?:ification)?s?|v?[0-9])";
 
-const CLA_RECORD_TERM_PATTERN = String.raw`clas?(?!s)(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN})`;
+// Test the singular boundary before consuming the optional plural "s" so a
+// separator-free suffix such as "signatures" remains visible to the lookahead.
+const CLA_RECORD_TERM_PATTERN = String.raw`cla(?:(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN})|s(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN}))`;
 
 const CONTRIBUTOR_PRIVATE_RECORD_PATTERN = new RegExp(
   String.raw`(?:^|[^a-z0-9])(?:(?:contributors?[^a-z0-9]*(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]*contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*signed[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN})[^a-z0-9]*(?:signed|signatures?)))`,
@@ -207,11 +209,33 @@ function matchesSignedClaStorage(artifactPath) {
  * @returns {boolean}
  */
 function matchesDirectPrivateRecordStorage(artifactPath, pattern) {
-  const semanticPath = artifactPath
+  const caseFoldedPath = artifactPath.toLocaleLowerCase("en-US");
+  const camelSeparatedPath = artifactPath
     .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1-$2")
     .replace(/([a-z0-9])([A-Z])/gu, "$1-$2");
+  const caseFoldedClassification = classifyDirectRecordPath(
+    caseFoldedPath,
+    pattern
+  );
+  if (caseFoldedClassification !== undefined) {
+    return caseFoldedClassification;
+  }
 
+  return classifyDirectRecordPath(camelSeparatedPath, pattern) ?? false;
+}
+
+/**
+ * Return whether a represented path is private, or undefined when the
+ * representation contains no direct protected-record phrase.
+ *
+ * @param {string} semanticPath
+ * @param {RegExp} pattern
+ * @returns {boolean | undefined}
+ */
+function classifyDirectRecordPath(semanticPath, pattern) {
+  let matchedProtectedPhrase = false;
   for (const match of semanticPath.matchAll(pattern)) {
+    matchedProtectedPhrase = true;
     const phraseEnd = match.index + match[0].length;
     const nextSeparator = semanticPath.indexOf("/", phraseEnd);
     const componentSuffix = semanticPath.slice(
@@ -236,7 +260,7 @@ function matchesDirectPrivateRecordStorage(artifactPath, pattern) {
     }
   }
 
-  return false;
+  return matchedProtectedPhrase ? false : undefined;
 }
 
 /**

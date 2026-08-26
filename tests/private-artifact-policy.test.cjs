@@ -139,6 +139,150 @@ test("rejects hierarchical and compatibility-spelled signed CLA storage", () => 
   }
 });
 
+test("rejects every concatenated signed-CLA suffix across case representations", () => {
+  const protectedSuffixes = [
+    "acceptance",
+    "acceptances",
+    "archive",
+    "archives",
+    "backup",
+    "backups",
+    "copy",
+    "copies",
+    "executed",
+    "final",
+    "record",
+    "records",
+    "signature",
+    "signatures",
+    "signed",
+    "storage",
+    "submission",
+    "submissions",
+    "process",
+    "template",
+    "templates",
+    "policy",
+    "policies",
+    "guide",
+    "guides",
+    "guidance",
+    "documentation",
+    "doc",
+    "docs",
+    "instruction",
+    "instructions",
+    "example",
+    "examples",
+    "schema",
+    "schemas",
+    "validator",
+    "validators",
+    "format",
+    "formats",
+    "spec",
+    "specs",
+    "specification",
+    "specifications",
+    "v1",
+    "1",
+  ];
+
+  for (const suffix of protectedSuffixes) {
+    const camelSuffix = `${suffix[0].toLocaleUpperCase("en-US")}${suffix.slice(1)}`;
+    const mixedCaseAlias = `signedcla${suffix}`
+      .split("")
+      .map((character, index) =>
+        index % 2 === 0 ? character.toLocaleUpperCase("en-US") : character
+      )
+      .join("");
+    const candidates = [
+      `legal/signedcla${suffix}.bin`,
+      `legal/signedCLA${camelSuffix}.bin`,
+      `legal/${mixedCaseAlias}.bin`,
+      `legal/signedclas${suffix}.bin`,
+      `legal/signedCLAs${camelSuffix}.bin`,
+    ];
+
+    for (const candidate of candidates) {
+      const violations = findPrivateArtifactViolations([candidate]);
+      assert.equal(violations.length, 1, candidate);
+      assert.equal(violations[0].ruleId, "signed-cla-storage", candidate);
+    }
+  }
+});
+
+test("retains case-varied concatenated public CLA documentation", () => {
+  const publicDocumentation = [
+    ["process", "md"],
+    ["template", "md"],
+    ["policy", "md"],
+    ["guidance", "md"],
+    ["documentation", "md"],
+    ["instructions", "md"],
+    ["examples", "md"],
+    ["schema", "ts"],
+    ["validator", "ts"],
+    ["formats", "ts"],
+    ["specifications", "ts"],
+  ];
+
+  const candidates = publicDocumentation.map(([qualifier, extension]) => {
+    const alias = `signedcla${qualifier}`
+      .split("")
+      .map((character, index) =>
+        index % 2 === 0 ? character.toLocaleUpperCase("en-US") : character
+      )
+      .join("");
+    return `docs/${alias}.${extension}`;
+  });
+  candidates.push(
+    "docs/SignedcladocumentaTIoN.md",
+    "docs/SignedclasdocumentATiOn.md",
+    "docs/SignedclaspecificaTIoN.ts",
+    "docs/SignedclasspecificATiOns.ts"
+  );
+
+  assert.deepEqual(findPrivateArtifactViolations(candidates), []);
+});
+
+test("retains camel-word fallback after authoritative case-folded classification", () => {
+  const privateCandidate = "legal/archiveSignedCLA.bin";
+  const violations = findPrivateArtifactViolations([privateCandidate]);
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].ruleId, "signed-cla-storage");
+  assert.deepEqual(
+    findPrivateArtifactViolations(["docs/archiveSignedCLATemplate.md"]),
+    []
+  );
+});
+
+test("rejects mixed-case concatenated contributor record families", () => {
+  const protectedAliases = [
+    "contributoracceptances",
+    "contributorsignatures",
+    "contributorsubmissions",
+    "signedcontributoragreement",
+    "contributorsignedagreement",
+    "contributoragreementsigned",
+    "contributoragreementsignature",
+  ].map((alias) =>
+    alias
+      .split("")
+      .map((character, index) =>
+        index % 2 === 0 ? character.toLocaleUpperCase("en-US") : character
+      )
+      .join("")
+  );
+
+  for (const alias of protectedAliases) {
+    const candidate = `legal/${alias}.bin`;
+    const violations = findPrivateArtifactViolations([candidate]);
+    assert.equal(violations.length, 1, candidate);
+    assert.equal(violations[0].ruleId, "contributor-record-storage", candidate);
+  }
+});
+
 test("rejects contributor record and signed agreement aliases", () => {
   const protectedPaths = [
     "legal/contributor-acceptances.json",
