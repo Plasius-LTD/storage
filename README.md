@@ -324,14 +324,15 @@ messages expose rule counts rather than suspected path values.
 `privacy:check` rejects protected paths in the working tree and proposed Git
 index. This includes contributor acceptance, signature, submission, and signed
 agreement record aliases across hierarchical, Windows, and Unicode
-compatibility path forms, case-folded separator-free forms independent of
-internal case transitions, and hierarchical signed-CLA categories. A closed
-policy-wrapper vocabulary also catches archive, backup, record, storage, and
-version text placed before protected aliases or around registry marker pairs,
-without classifying arbitrary substring matches. Concatenated singular and
-plural CLA terms are classified before every protected record-category suffix.
-Explicit process, template, policy, schema, and validator documents remain
-public only when they are files, not record directories.
+compatibility path forms. One closed semantic vocabulary recognizes all
+contributor, CLA, privacy, registry, record-category, wrapper, and version terms
+across separators, case styles, and separator-free forms. Protected families
+are classified independently of term order, so intervening wrappers, reversed
+aliases, and a third protected marker cannot turn a private path into an opaque
+token. Arbitrary substring matches remain outside the closed vocabulary.
+Explicit process, template, policy, schema, and validator documents, including
+compact or separated numeric/version suffixes such as `V2`, remain public only
+when they are terminal files, not record directories.
 Windows-ignored trailing dots and spaces are removed from each path component
 only for classification, so a path such as `report.csv. ` is rejected while its
 raw package identity remains distinct for exact allowlist and collision checks.

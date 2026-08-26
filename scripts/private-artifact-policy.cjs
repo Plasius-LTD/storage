@@ -27,7 +27,17 @@ const REGISTRY_MARKERS = new Set([
   "roster",
 ]);
 
-const CLA_MARKERS = new Set(["cla", "clas", "contributor", "contributors"]);
+const STRICT_CLA_MARKERS = new Set(["cla", "clas"]);
+const CONTRIBUTOR_MARKERS = new Set(["contributor", "contributors"]);
+const RECORD_CATEGORY_MARKERS = new Set([
+  "acceptance",
+  "acceptances",
+  "signature",
+  "signatures",
+  "submission",
+  "submissions",
+]);
+const AGREEMENT_MARKERS = new Set(["agreement", "agreements"]);
 
 // These words may wrap a protected separator-free record/registry alias. Keep
 // this vocabulary closed so ordinary words containing a protected substring
@@ -78,29 +88,60 @@ const CONCATENATED_POLICY_WRAPPER_WORDS = Object.freeze([
   "specifications",
 ]);
 
-const CONCATENATED_RECORD_SUFFIX_PATTERN =
-  "(?:acceptances?|archives?|backups?|cop(?:y|ies)|executed|final|records?|signatures?|signed|storage|submissions?|process|templates?|polic(?:y|ies)|guides?|guidance|documentation|docs?|instructions?|examples?|schemas?|validators?|formats?|spec(?:ification)?s?|v?[0-9])";
-
-// Test the singular boundary before consuming the optional plural "s" so a
-// separator-free suffix such as "signatures" remains visible to the lookahead.
-const CLA_RECORD_TERM_PATTERN = String.raw`cla(?:(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN})|s(?=$|[^a-z0-9]|${CONCATENATED_RECORD_SUFFIX_PATTERN}))`;
-
-const CONTRIBUTOR_PRIVATE_RECORD_PATTERN = new RegExp(
-  String.raw`(?:(?:contributors?[^a-z0-9]*(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]*contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*signed[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN}))|(?:contributors?[^a-z0-9]*(?:agreements?|${CLA_RECORD_TERM_PATTERN})[^a-z0-9]*(?:signed|signatures?)))`,
-  "giu"
-);
-
-const SIGNED_CLA_PRIVATE_RECORD_PATTERN = new RegExp(
-  String.raw`(?:(?:signed[^a-z0-9]*${CLA_RECORD_TERM_PATTERN})|(?:${CLA_RECORD_TERM_PATTERN}[^a-z0-9]*(?:acceptances?|signatures?|submissions?)))`,
-  "giu"
-);
-
 const safeArtifactPolicyErrors = new WeakMap();
 
-const PUBLIC_CONTRIBUTOR_DOCUMENT_QUALIFIER_PATTERNS = Object.freeze([
-  /^[^a-z0-9]*(?:process|template|policy|guides?|guidance|documentation|docs?|instructions?|examples?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:md|mdx|rst|adoc|txt|pdf)$/iu,
-  /^[^a-z0-9]*(?:schema|validator|formats?|spec(?:ification)?s?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:[cm]?[jt]sx?|d\.[cm]?[jt]s|mdx?|json|ya?ml)$/iu,
-]);
+const SEMANTIC_FEATURES = Object.freeze({
+  PRIVACY: 1 << 0,
+  REGISTRY: 1 << 1,
+  CLA: 1 << 2,
+  CONTRIBUTOR: 1 << 3,
+  RECORD_CATEGORY: 1 << 4,
+  SIGNED: 1 << 5,
+  AGREEMENT: 1 << 6,
+});
+
+const PUBLIC_DOCUMENT_QUALIFIERS = Object.freeze({
+  prose: new Set([
+    "process",
+    "template",
+    "templates",
+    "policy",
+    "policies",
+    "guide",
+    "guides",
+    "guidance",
+    "documentation",
+    "doc",
+    "docs",
+    "instruction",
+    "instructions",
+    "example",
+    "examples",
+  ]),
+  schema: new Set([
+    "schema",
+    "schemas",
+    "validator",
+    "validators",
+    "format",
+    "formats",
+    "spec",
+    "specs",
+    "specification",
+    "specifications",
+  ]),
+});
+
+const PUBLIC_QUALIFIER_NONE = 0;
+const PUBLIC_QUALIFIER_PROSE = 1;
+const PUBLIC_QUALIFIER_SCHEMA = 2;
+const SEMANTIC_STATE_QUALIFIER_SHIFT = 8;
+const SEMANTIC_STATE_MASK = (1 << SEMANTIC_STATE_QUALIFIER_SHIFT) - 1;
+
+const SEMANTIC_POLICY_WORDS = createSemanticPolicyWords();
+const SEMANTIC_POLICY_WORDS_BY_INITIAL = groupSemanticWordsByInitial(
+  SEMANTIC_POLICY_WORDS
+);
 
 const BROAD_PACKAGE_FILE_ENTRIES = new Set([
   "",
@@ -125,27 +166,53 @@ const PRIVATE_ARTIFACT_RULES = Object.freeze([
     id: "cla-contributor-registry",
     description:
       "Contributor and CLA acceptance registries must remain in approved private systems.",
-    matches: (_artifactPath, tokens) =>
-      hasMarkerPair(tokens, CLA_MARKERS, REGISTRY_MARKERS),
+    matches: (_artifactPath, semanticPath) =>
+      matchesSemanticFamily(
+        semanticPath,
+        (mask) =>
+          hasSemanticFeature(mask, SEMANTIC_FEATURES.REGISTRY) &&
+          (hasSemanticFeature(mask, SEMANTIC_FEATURES.CLA) ||
+            hasSemanticFeature(mask, SEMANTIC_FEATURES.CONTRIBUTOR))
+      ),
   }),
   Object.freeze({
     id: "contributor-record-storage",
     description:
       "Signed contributor agreements and contributor acceptance, signature, or submission records must remain in approved private systems.",
-    matches: (artifactPath) => matchesContributorRecordStorage(artifactPath),
+    matches: (_artifactPath, semanticPath) =>
+      matchesSemanticFamily(
+        semanticPath,
+        matchesContributorRecordMask,
+        SEMANTIC_FEATURES.CONTRIBUTOR |
+          SEMANTIC_FEATURES.RECORD_CATEGORY |
+          SEMANTIC_FEATURES.SIGNED |
+          SEMANTIC_FEATURES.AGREEMENT
+      ),
   }),
   Object.freeze({
     id: "signed-cla-storage",
     description:
       "Signed CLA submissions and signature records must remain in approved private systems.",
-    matches: (artifactPath) => matchesSignedClaStorage(artifactPath),
+    matches: (_artifactPath, semanticPath) =>
+      matchesSemanticFamily(
+        semanticPath,
+        matchesSignedClaRecordMask,
+        SEMANTIC_FEATURES.CLA |
+          SEMANTIC_FEATURES.SIGNED |
+          SEMANTIC_FEATURES.RECORD_CATEGORY
+      ),
   }),
   Object.freeze({
     id: "private-registry",
     description:
       "Registry paths marked private, confidential, internal, personal, or PII must remain outside public artifacts.",
-    matches: (_artifactPath, tokens) =>
-      hasMarkerPair(tokens, PRIVACY_MARKERS, REGISTRY_MARKERS),
+    matches: (_artifactPath, semanticPath) =>
+      matchesSemanticFamily(
+        semanticPath,
+        (mask) =>
+          hasSemanticFeature(mask, SEMANTIC_FEATURES.PRIVACY) &&
+          hasSemanticFeature(mask, SEMANTIC_FEATURES.REGISTRY)
+      ),
   }),
 ]);
 
@@ -205,293 +272,355 @@ function canonicalizeArtifactPathForClassification(artifactPath) {
 }
 
 /**
- * Classify contributor record categories while retaining explicit public
- * process, template, schema, validator, and policy documents. A matching
- * category used as a directory remains private regardless of its suffix.
+ * Build one closed vocabulary for every protected marker and permitted wrapper.
+ * A token must be fully segmentable through this vocabulary (or explicit camel
+ * boundaries) before any embedded marker contributes to classification.
  *
- * @param {string} artifactPath
- * @returns {boolean}
+ * @returns {Map<string, {featureMask: number, qualifier: number}>}
  */
-function matchesContributorRecordStorage(artifactPath) {
-  if (
-    matchesDirectPrivateRecordStorage(
-      artifactPath,
-      CONTRIBUTOR_PRIVATE_RECORD_PATTERN
-    )
-  ) {
-    return true;
-  }
-
-  return matchesHierarchicalContributorRecordStorage(artifactPath);
-}
-
-/**
- * Classify signed CLA categories in direct, concatenated, compatibility-
- * normalized, or hierarchical forms while retaining terminal public docs.
- *
- * @param {string} artifactPath
- * @returns {boolean}
- */
-function matchesSignedClaStorage(artifactPath) {
-  if (
-    matchesDirectPrivateRecordStorage(
-      artifactPath,
-      SIGNED_CLA_PRIVATE_RECORD_PATTERN
-    )
-  ) {
-    return true;
-  }
-
-  const words = extractSemanticWords(artifactPath);
-  return [
-    [isSignedWord, isClaWord],
-    [isClaWord, isRecordCategoryWord],
-  ].some((sequence) => hasCrossComponentSequence(words, sequence));
-}
-
-/**
- * Apply a direct protected-category matcher and permit only an allowlisted
- * documentation qualifier on the terminal component.
- *
- * @param {string} artifactPath
- * @param {RegExp} pattern
- * @returns {boolean}
- */
-function matchesDirectPrivateRecordStorage(artifactPath, pattern) {
-  const caseFoldedPath = artifactPath.toLocaleLowerCase("en-US");
-  const camelSeparatedPath = artifactPath
-    .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1-$2")
-    .replace(/([a-z0-9])([A-Z])/gu, "$1-$2");
-  const caseFoldedClassification = classifyDirectRecordPath(
-    caseFoldedPath,
-    pattern
+function createSemanticPolicyWords() {
+  const words = new Map(
+    CONCATENATED_POLICY_WRAPPER_WORDS.map((word) => [
+      word,
+      { featureMask: 0, qualifier: PUBLIC_QUALIFIER_NONE },
+    ])
   );
-  if (caseFoldedClassification !== undefined) {
-    return caseFoldedClassification;
-  }
 
-  return classifyDirectRecordPath(camelSeparatedPath, pattern) ?? false;
+  const addWords = (values, featureMask, qualifier = PUBLIC_QUALIFIER_NONE) => {
+    for (const word of values) {
+      const existing = words.get(word) ?? {
+        featureMask: 0,
+        qualifier: PUBLIC_QUALIFIER_NONE,
+      };
+      words.set(word, {
+        featureMask: existing.featureMask | featureMask,
+        qualifier: qualifier || existing.qualifier,
+      });
+    }
+  };
+
+  addWords(PRIVACY_MARKERS, SEMANTIC_FEATURES.PRIVACY);
+  addWords(REGISTRY_MARKERS, SEMANTIC_FEATURES.REGISTRY);
+  addWords(STRICT_CLA_MARKERS, SEMANTIC_FEATURES.CLA | SEMANTIC_FEATURES.AGREEMENT);
+  addWords(CONTRIBUTOR_MARKERS, SEMANTIC_FEATURES.CONTRIBUTOR);
+  addWords(RECORD_CATEGORY_MARKERS, SEMANTIC_FEATURES.RECORD_CATEGORY);
+  addWords(AGREEMENT_MARKERS, SEMANTIC_FEATURES.AGREEMENT);
+  addWords(["signed"], SEMANTIC_FEATURES.SIGNED);
+  addWords(
+    PUBLIC_DOCUMENT_QUALIFIERS.prose,
+    0,
+    PUBLIC_QUALIFIER_PROSE
+  );
+  addWords(
+    PUBLIC_DOCUMENT_QUALIFIERS.schema,
+    0,
+    PUBLIC_QUALIFIER_SCHEMA
+  );
+
+  return words;
 }
 
 /**
- * Return whether a represented path is private, or undefined when the
- * representation contains no direct protected-record phrase.
- *
- * @param {string} semanticPath
- * @param {RegExp} pattern
- * @returns {boolean | undefined}
+ * @param {Map<string, {featureMask: number, qualifier: number}>} words
+ * @returns {Map<string, Array<[string, {featureMask: number, qualifier: number}]>>}
  */
-function classifyDirectRecordPath(semanticPath, pattern) {
-  let matchedProtectedPhrase = false;
-  for (const match of semanticPath.matchAll(pattern)) {
-    if (!hasRecognizedConcatenatedPrefix(semanticPath, match.index)) {
+function groupSemanticWordsByInitial(words) {
+  const grouped = new Map();
+  for (const entry of words) {
+    const initial = entry[0][0];
+    const entries = grouped.get(initial) ?? [];
+    entries.push(entry);
+    grouped.set(initial, entries);
+  }
+  return grouped;
+}
+
+/**
+ * Analyze every component once so all policy rules share identical marker,
+ * wrapper, casing, separator, and concatenation semantics.
+ *
+ * @param {string} artifactPath
+ * @returns {{mask: number, nonTerminalMask: number, publicDocument: {mask: number, qualifier: number} | undefined}}
+ */
+function analyzeSemanticPath(artifactPath) {
+  const components = artifactPath.split("/");
+  const terminalIndex = components.length - 1;
+  let mask = 0;
+  let nonTerminalMask = 0;
+
+  for (let index = 0; index < components.length; index += 1) {
+    const componentMask = analyzeSemanticComponent(components[index]).mask;
+    mask |= componentMask;
+    if (index !== terminalIndex) {
+      nonTerminalMask |= componentMask;
+    }
+  }
+
+  return {
+    mask,
+    nonTerminalMask,
+    publicDocument: analyzePublicDocumentComponent(components[terminalIndex]),
+  };
+}
+
+/**
+ * @param {string} component
+ * @returns {{mask: number, trailingQualifiers: Set<number>, publicSuffixSafe: boolean}}
+ */
+function analyzeSemanticComponent(component) {
+  const segments = component.split(/[^a-z0-9]+/iu).filter(Boolean);
+  let mask = 0;
+  let trailingQualifiers = new Set([PUBLIC_QUALIFIER_NONE]);
+  let protectedSeen = false;
+  let publicSuffixSafe = true;
+
+  for (const segment of segments) {
+    const analysis = analyzeSemanticSegment(segment);
+    if (
+      analysis.unknownAfterProtected ||
+      (protectedSeen && !analysis.recognized)
+    ) {
+      publicSuffixSafe = false;
+    }
+    mask |= analysis.mask;
+    if (analysis.mask !== 0) {
+      protectedSeen = true;
+    }
+    if (!analysis.recognized) {
+      trailingQualifiers = new Set([PUBLIC_QUALIFIER_NONE]);
+    } else if (!analysis.numericOnly) {
+      trailingQualifiers = analysis.trailingQualifiers;
+    }
+  }
+
+  return { mask, trailingQualifiers, publicSuffixSafe };
+}
+
+/**
+ * Prefer complete case-folded segmentation so casing cannot alter the policy.
+ * If an otherwise opaque value has explicit camel boundaries, analyze those
+ * words independently while retaining unknown-word protection.
+ *
+ * @param {string} segment
+ * @returns {{mask: number, trailingQualifiers: Set<number>, recognized: boolean, numericOnly: boolean, unknownAfterProtected: boolean}}
+ */
+function analyzeSemanticSegment(segment) {
+  const loweredSegment = segment.toLocaleLowerCase("en-US");
+  const states = segmentSemanticValue(loweredSegment);
+  if (states !== undefined) {
+    return {
+      ...summarizeSemanticStates(
+        states,
+        /^[v]?[0-9]+$/u.test(loweredSegment)
+      ),
+      unknownAfterProtected: false,
+    };
+  }
+
+  const camelWords = segment
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+    .split(" ");
+  if (camelWords.length === 1) {
+    return {
+      mask: 0,
+      trailingQualifiers: new Set([PUBLIC_QUALIFIER_NONE]),
+      recognized: false,
+      numericOnly: false,
+      unknownAfterProtected: false,
+    };
+  }
+
+  let mask = 0;
+  let trailingQualifiers = new Set([PUBLIC_QUALIFIER_NONE]);
+  let recognized = false;
+  let numericOnly = true;
+  let protectedSeen = false;
+  let unknownAfterProtected = false;
+  for (const camelWord of camelWords) {
+    const loweredWord = camelWord.toLocaleLowerCase("en-US");
+    const wordStates = segmentSemanticValue(loweredWord);
+    if (wordStates === undefined) {
+      trailingQualifiers = new Set([PUBLIC_QUALIFIER_NONE]);
+      numericOnly = false;
+      unknownAfterProtected ||= protectedSeen;
       continue;
     }
-    matchedProtectedPhrase = true;
-    const phraseEnd = match.index + match[0].length;
-    const nextSeparator = semanticPath.indexOf("/", phraseEnd);
-    const componentSuffix = semanticPath.slice(
-      phraseEnd,
-      nextSeparator === -1 ? semanticPath.length : nextSeparator
+    const wordAnalysis = summarizeSemanticStates(
+      wordStates,
+      /^[v]?[0-9]+$/u.test(loweredWord)
     );
-    const publicSuffixCandidates = [componentSuffix];
-    // In a separator-free name, a greedy plural can consume the leading "s"
-    // from a public "schema" or "specification" qualifier.
-    if (match[0].toLocaleLowerCase("en-US").endsWith("s")) {
-      publicSuffixCandidates.push(`s${componentSuffix}`);
+    recognized = true;
+    mask |= wordAnalysis.mask;
+    if (wordAnalysis.mask !== 0) {
+      protectedSeen = true;
     }
-    const isPublicDocumentation =
-      nextSeparator === -1 &&
-      publicSuffixCandidates.some((suffix) =>
-        PUBLIC_CONTRIBUTOR_DOCUMENT_QUALIFIER_PATTERNS.some((pattern) =>
-          pattern.test(suffix)
-        )
-      );
-    if (!isPublicDocumentation) {
-      return true;
+    if (!wordAnalysis.numericOnly) {
+      trailingQualifiers = wordAnalysis.trailingQualifiers;
+      numericOnly = false;
     }
   }
 
-  return matchedProtectedPhrase ? false : undefined;
+  return {
+    mask,
+    trailingQualifiers,
+    recognized,
+    numericOnly,
+    unknownAfterProtected,
+  };
 }
 
 /**
- * Require any alphanumeric text immediately before a direct protected phrase
- * to consist entirely of the closed wrapper vocabulary (or version digits).
- * This catches archive/backup/year prefixes without treating arbitrary word
- * substrings as protected records.
- *
- * @param {string} semanticPath
- * @param {number} phraseStart
- * @returns {boolean}
- */
-function hasRecognizedConcatenatedPrefix(semanticPath, phraseStart) {
-  let runStart = phraseStart;
-  while (runStart > 0 && /[a-z0-9]/iu.test(semanticPath[runStart - 1])) {
-    runStart -= 1;
-  }
-
-  return canSegmentConcatenatedWrappers(
-    semanticPath.slice(runStart, phraseStart).toLocaleLowerCase("en-US")
-  );
-}
-
-/**
- * Segment a complete separator-free value using only approved wrapper words
- * and numeric/version markers. Dynamic programming preserves overlapping
- * singular/plural alternatives without relying on case transitions.
+ * Segment one complete alphanumeric value through the global semantic
+ * vocabulary. State retains both accumulated protected features and whether
+ * the final non-version word is a public-document qualifier.
  *
  * @param {string} value
- * @returns {boolean}
+ * @returns {Set<number> | undefined}
  */
-function canSegmentConcatenatedWrappers(value) {
-  const reachable = new Uint8Array(value.length + 1);
-  reachable[0] = 1;
+function segmentSemanticValue(value) {
+  const statesByOffset = new Map([[0, new Set([0])]]);
+  let lastReachableOffset = 0;
 
-  for (let index = 0; index < value.length; index += 1) {
-    if (!reachable[index]) {
+  for (
+    let index = 0;
+    index <= lastReachableOffset && index < value.length;
+    index += 1
+  ) {
+    const states = statesByOffset.get(index);
+    if (states === undefined) {
       continue;
     }
 
-    for (const word of CONCATENATED_POLICY_WRAPPER_WORDS) {
-      if (value.startsWith(word, index)) {
-        reachable[index + word.length] = 1;
+    const words = SEMANTIC_POLICY_WORDS_BY_INITIAL.get(value[index]) ?? [];
+    for (const [word, metadata] of words) {
+      if (!value.startsWith(word, index)) {
+        continue;
       }
+      const nextOffset = index + word.length;
+      const nextStates = statesByOffset.get(nextOffset) ?? new Set();
+      for (const state of states) {
+        const featureMask =
+          (state & SEMANTIC_STATE_MASK) | metadata.featureMask;
+        nextStates.add(
+          featureMask |
+            (metadata.qualifier << SEMANTIC_STATE_QUALIFIER_SHIFT)
+        );
+      }
+      statesByOffset.set(nextOffset, nextStates);
+      lastReachableOffset = Math.max(lastReachableOffset, nextOffset);
     }
 
     const numericEnd = consumeNumericWrapper(value, index);
     if (numericEnd !== undefined) {
-      reachable[numericEnd] = 1;
+      const nextStates = statesByOffset.get(numericEnd) ?? new Set();
+      for (const state of states) {
+        nextStates.add(state);
+      }
+      statesByOffset.set(numericEnd, nextStates);
+      lastReachableOffset = Math.max(lastReachableOffset, numericEnd);
     }
   }
 
-  return reachable[value.length] === 1;
+  return statesByOffset.get(value.length);
 }
 
 /**
- * Detect record-category layouts whose semantic terms are separated by one or
- * more intermediate path components. Public-document exceptions apply only to
- * terminal filenames, so a category expressed across directories fails closed.
- *
- * @param {string} artifactPath
- * @returns {boolean}
+ * @param {Set<number>} states
+ * @param {boolean} numericOnly
+ * @returns {{mask: number, trailingQualifiers: Set<number>, recognized: true, numericOnly: boolean}}
  */
-function matchesHierarchicalContributorRecordStorage(artifactPath) {
-  const words = extractSemanticWords(artifactPath);
-
-  return [
-    [isContributorWord, isRecordCategoryWord],
-    [isSignedWord, isContributorWord, isAgreementWord],
-    [isContributorWord, isSignedWord, isAgreementWord],
-    [isContributorWord, isAgreementWord, isSignedOrSignatureWord],
-  ].some((sequence) => hasCrossComponentSequence(words, sequence));
+function summarizeSemanticStates(states, numericOnly) {
+  let mask = 0;
+  const trailingQualifiers = new Set();
+  for (const state of states) {
+    mask |= state & SEMANTIC_STATE_MASK;
+    trailingQualifiers.add(state >> SEMANTIC_STATE_QUALIFIER_SHIFT);
+  }
+  return { mask, trailingQualifiers, recognized: true, numericOnly };
 }
 
 /**
- * Split path components into policy words, including common camel-case and
- * acronym transitions, without changing the artifact identity used elsewhere.
+ * Recognize only terminal public documentation with an allowlisted qualifier,
+ * extension, and optional compact or separated numeric/version suffix.
  *
- * @param {string} artifactPath
- * @returns {Array<{componentIndex: number, word: string}>}
+ * @param {string} component
+ * @returns {{mask: number, qualifier: number} | undefined}
  */
-function extractSemanticWords(artifactPath) {
-  return artifactPath.split("/").flatMap((component, componentIndex) =>
-    component
-      .split(/[^a-z0-9]+/iu)
-      .filter(Boolean)
-      .flatMap((segment) => {
-        const loweredSegment = segment.toLocaleLowerCase("en-US");
-        const words = isSemanticPolicyWord(loweredSegment)
-          ? [loweredSegment]
-          : segment
-              .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1 $2")
-              .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
-              .toLocaleLowerCase("en-US")
-              .split(" ");
-        return words.map((word) => ({ componentIndex, word }));
-      })
-  );
-}
-
-function isSemanticPolicyWord(word) {
-  return (
-    isContributorWord(word) ||
-    isRecordCategoryWord(word) ||
-    isSignedWord(word) ||
-    isAgreementWord(word)
-  );
-}
-
-function isContributorWord(word) {
-  return word === "contributor" || word === "contributors";
-}
-
-function isRecordCategoryWord(word) {
-  return (
-    word === "acceptance" ||
-    word === "acceptances" ||
-    word === "signature" ||
-    word === "signatures" ||
-    word === "submission" ||
-    word === "submissions"
-  );
-}
-
-function isSignedWord(word) {
-  return word === "signed";
-}
-
-function isClaWord(word) {
-  return word === "cla" || word === "clas";
-}
-
-function isAgreementWord(word) {
-  return (
-    word === "agreement" ||
-    word === "agreements" ||
-    isClaWord(word)
-  );
-}
-
-function isSignedOrSignatureWord(word) {
-  return isSignedWord(word) || word === "signature" || word === "signatures";
-}
-
-/**
- * Match an ordered semantic sequence in linear time and require it to span at
- * least two path components. Descending stage updates prevent one word from
- * satisfying more than one sequence position.
- *
- * @param {Array<{componentIndex: number, word: string}>} words
- * @param {Array<(word: string) => boolean>} sequence
- * @returns {boolean}
- */
-function hasCrossComponentSequence(words, sequence) {
-  const earliestStartByStage = Array(sequence.length).fill(undefined);
-
-  for (const { componentIndex, word } of words) {
-    for (let stage = sequence.length - 1; stage >= 0; stage -= 1) {
-      if (!sequence[stage](word)) {
-        continue;
-      }
-
-      if (stage === 0) {
-        earliestStartByStage[0] ??= componentIndex;
-        continue;
-      }
-
-      const startComponent = earliestStartByStage[stage - 1];
-      if (startComponent === undefined) {
-        continue;
-      }
-      if (stage === sequence.length - 1 && startComponent < componentIndex) {
-        return true;
-      }
-      earliestStartByStage[stage] ??= startComponent;
-    }
+function analyzePublicDocumentComponent(component) {
+  const extensionMatch = component
+    .toLocaleLowerCase("en-US")
+    .match(/\.(d\.[cm]?[jt]s|[cm]?[jt]sx?|mdx?|json|ya?ml|rst|adoc|txt|pdf)$/u);
+  if (!extensionMatch) {
+    return undefined;
   }
 
-  return false;
+  const extension = extensionMatch[1];
+  const basename = component.slice(0, -extensionMatch[0].length);
+  const analysis = analyzeSemanticComponent(basename);
+  if (!analysis.publicSuffixSafe) {
+    return undefined;
+  }
+  const allowedQualifiers = new Set();
+  if (/^(?:mdx?|rst|adoc|txt|pdf)$/u.test(extension)) {
+    allowedQualifiers.add(PUBLIC_QUALIFIER_PROSE);
+  }
+  if (/^(?:d\.[cm]?[jt]s|[cm]?[jt]sx?|mdx?|json|ya?ml)$/u.test(extension)) {
+    allowedQualifiers.add(PUBLIC_QUALIFIER_SCHEMA);
+  }
+
+  const qualifier = [...analysis.trailingQualifiers].find((candidate) =>
+    allowedQualifiers.has(candidate)
+  );
+  return qualifier === undefined
+    ? undefined
+    : { mask: analysis.mask, qualifier };
+}
+
+/**
+ * @param {{mask: number, nonTerminalMask: number, publicDocument: {mask: number, qualifier: number} | undefined}} semanticPath
+ * @param {(mask: number) => boolean} predicate
+ * @param {number} [publicRelevantMask]
+ * @returns {boolean}
+ */
+function matchesSemanticFamily(
+  semanticPath,
+  predicate,
+  publicRelevantMask = 0
+) {
+  if (!predicate(semanticPath.mask)) {
+    return false;
+  }
+  if (
+    publicRelevantMask === 0 ||
+    semanticPath.publicDocument === undefined ||
+    !predicate(semanticPath.publicDocument.mask)
+  ) {
+    return true;
+  }
+
+  return (semanticPath.nonTerminalMask & publicRelevantMask) !== 0;
+}
+
+function matchesContributorRecordMask(mask) {
+  return (
+    hasSemanticFeature(mask, SEMANTIC_FEATURES.CONTRIBUTOR) &&
+    (hasSemanticFeature(mask, SEMANTIC_FEATURES.RECORD_CATEGORY) ||
+      (hasSemanticFeature(mask, SEMANTIC_FEATURES.SIGNED) &&
+        hasSemanticFeature(mask, SEMANTIC_FEATURES.AGREEMENT)))
+  );
+}
+
+function matchesSignedClaRecordMask(mask) {
+  return (
+    hasSemanticFeature(mask, SEMANTIC_FEATURES.CLA) &&
+    (hasSemanticFeature(mask, SEMANTIC_FEATURES.SIGNED) ||
+      hasSemanticFeature(mask, SEMANTIC_FEATURES.RECORD_CATEGORY))
+  );
+}
+
+function hasSemanticFeature(mask, feature) {
+  return (mask & feature) === feature;
 }
 
 /**
@@ -515,13 +644,10 @@ function findPrivateArtifactViolations(artifactPaths) {
       continue;
     }
 
-    const tokens = classificationPath
-      .toLocaleLowerCase("en-US")
-      .split(/[^a-z0-9]+/u)
-      .filter(Boolean);
+    const semanticPath = analyzeSemanticPath(classificationPath);
 
     for (const rule of PRIVATE_ARTIFACT_RULES) {
-      if (!rule.matches(classificationPath, tokens)) {
+      if (!rule.matches(classificationPath, semanticPath)) {
         continue;
       }
 
@@ -814,69 +940,6 @@ function normalizePackageFilesEntry(entry) {
   return withoutPrefix.length > 1
     ? withoutPrefix.replace(/\/+$/u, "")
     : withoutPrefix;
-}
-
-function hasMarkerPair(tokens, leftMarkers, rightMarkers) {
-  const hasSeparatedPair =
-    tokens.some((token) => leftMarkers.has(token)) &&
-    tokens.some((token) => rightMarkers.has(token));
-  if (hasSeparatedPair) {
-    return true;
-  }
-
-  return tokens.some((token) =>
-    hasSegmentedMarkerPair(token, leftMarkers, rightMarkers)
-  );
-}
-
-/**
- * Segment the complete token through marker and closed wrapper vocabularies.
- * A two-bit state records whether each required marker family was observed,
- * allowing approved wrappers before, between, or after the pair.
- *
- * @param {string} token
- * @param {Set<string>} leftMarkers
- * @param {Set<string>} rightMarkers
- * @returns {boolean}
- */
-function hasSegmentedMarkerPair(token, leftMarkers, rightMarkers) {
-  const words = new Set([
-    ...CONCATENATED_POLICY_WRAPPER_WORDS,
-    ...leftMarkers,
-    ...rightMarkers,
-  ]);
-  const statesByOffset = Array.from(
-    { length: token.length + 1 },
-    () => new Set()
-  );
-  statesByOffset[0].add(0);
-
-  for (let index = 0; index < token.length; index += 1) {
-    if (statesByOffset[index].size === 0) {
-      continue;
-    }
-
-    for (const word of words) {
-      if (!token.startsWith(word, index)) {
-        continue;
-      }
-      let markerState = 0;
-      if (leftMarkers.has(word)) markerState |= 1;
-      if (rightMarkers.has(word)) markerState |= 2;
-      for (const state of statesByOffset[index]) {
-        statesByOffset[index + word.length].add(state | markerState);
-      }
-    }
-
-    const numericEnd = consumeNumericWrapper(token, index);
-    if (numericEnd !== undefined) {
-      for (const state of statesByOffset[index]) {
-        statesByOffset[numericEnd].add(state);
-      }
-    }
-  }
-
-  return statesByOffset[token.length].has(3);
 }
 
 /**

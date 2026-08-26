@@ -139,6 +139,180 @@ test("rejects hierarchical and compatibility-spelled signed CLA storage", () => 
   }
 });
 
+test("rejects protected contributor and CLA record terms in every order", () => {
+  const protectedPaths = new Map([
+    [
+      "contributor-record-storage",
+      [
+        "legal/acceptances-contributors/2026.json",
+        "legal/signatures/contributor/backup.pdf",
+        "legal/submissions-contributor.json",
+        "legal/archiveacceptancescontributorsbackup.json",
+        "legal/agreements/signed/contributors/record.pdf",
+        "legal/signed/agreements/contributors/record.pdf",
+        "legal/agreement-contributor-signed.pdf",
+        "legal/signature-contributor-agreement.pdf",
+        "legal/signature-agreement-contributor.pdf",
+        "legal/archiveagreementsignedcontributorsbackup.pdf",
+      ],
+    ],
+    [
+      "signed-cla-storage",
+      [
+        "legal/CLA/signed/record.pdf",
+        "legal/cla-signed.pdf",
+        "legal/CLASigned.pdf",
+        "legal/clas/signed/record.pdf",
+        "legal/archiveclasignedbackup.pdf",
+        "legal/signatures/CLAs/record.pdf",
+        "legal/acceptances-cla.json",
+        "legal/submissionsclas.json",
+      ],
+    ],
+  ]);
+
+  for (const [ruleId, candidates] of protectedPaths) {
+    for (const candidate of candidates) {
+      const violations = findPrivateArtifactViolations([candidate]);
+      assert.equal(violations.length, 1, candidate);
+      assert.equal(violations[0].ruleId, ruleId, candidate);
+    }
+  }
+});
+
+test("rejects protected families across intervening wrappers and mixed boundaries", () => {
+  const protectedPaths = new Map([
+    [
+      "contributor-record-storage",
+      [
+        "legal/contributor-backup-acceptances.json",
+        "legal/contributor-v2acceptances.json",
+        "legal/signed-v2-contributor-agreement.pdf",
+      ],
+    ],
+    [
+      "signed-cla-storage",
+      [
+        "legal/signed-backup-cla.pdf",
+        "legal/signedv2cla.pdf",
+        "legal/clas-backups-signatures.json",
+        "legal/clasv2submissions.json",
+      ],
+    ],
+    [
+      "cla-contributor-registry",
+      [
+        "legal/clabackup-registry.json",
+        "legal/cla-backupregistry.json",
+        "legal/contributor-v2roster.json",
+      ],
+    ],
+    [
+      "private-registry",
+      [
+        "legal/privatebackup-registry.json",
+        "legal/private-backupregistry.json",
+        "legal/private-v2registry.json",
+      ],
+    ],
+  ]);
+
+  for (const [ruleId, candidates] of protectedPaths) {
+    for (const candidate of candidates) {
+      const violations = findPrivateArtifactViolations([candidate]);
+      assert.equal(violations.length, 1, candidate);
+      assert.equal(violations[0].ruleId, ruleId, candidate);
+    }
+  }
+});
+
+test("rejects third protected markers inside separator-free aliases", () => {
+  const protectedPaths = new Map([
+    [
+      "cla-contributor-registry",
+      [
+        "legal/privateclaregistry.json",
+        "legal/claprivateregistry.json",
+        "legal/internalcontributorsroster.json",
+        "legal/rosterpiicla.json",
+        "legal/archiveprivate2026claregistrybackup.json",
+        "legal/privateCLARegistry.json",
+        "legal/PIIContributorRoster.json",
+      ],
+    ],
+    [
+      "contributor-record-storage",
+      [
+        "legal/privatecontributoracceptances.json",
+        "legal/clacontributorsignatures.json",
+      ],
+    ],
+    [
+      "signed-cla-storage",
+      ["legal/privatesignedcla.pdf", "legal/piiclassignatures.json"],
+    ],
+  ]);
+
+  for (const [ruleId, candidates] of protectedPaths) {
+    for (const candidate of candidates) {
+      const violations = findPrivateArtifactViolations([candidate]);
+      assert.equal(violations.length, 1, candidate);
+      assert.equal(violations[0].ruleId, ruleId, candidate);
+    }
+  }
+});
+
+test("rejects every protected-family permutation with wrappers at every boundary", () => {
+  const families = [
+    {
+      ruleId: "contributor-record-storage",
+      terms: ["contributor", "acceptances"],
+    },
+    {
+      ruleId: "contributor-record-storage",
+      terms: ["contributors", "signed", "agreement"],
+    },
+    { ruleId: "signed-cla-storage", terms: ["signed", "cla"] },
+    { ruleId: "signed-cla-storage", terms: ["clas", "submissions"] },
+    {
+      ruleId: "cla-contributor-registry",
+      terms: ["contributor", "roster"],
+    },
+    { ruleId: "cla-contributor-registry", terms: ["cla", "registry"] },
+    { ruleId: "private-registry", terms: ["pii", "registry"] },
+  ];
+
+  for (const { ruleId, terms } of families) {
+    for (const orderedTerms of permutations(terms)) {
+      for (const wrapper of ["backup", "v2", "archive2026backup"]) {
+        for (
+          let insertionIndex = 0;
+          insertionIndex <= orderedTerms.length;
+          insertionIndex += 1
+        ) {
+          const atoms = [...orderedTerms];
+          atoms.splice(insertionIndex, 0, wrapper);
+          const aliases = new Set([
+            atoms.join(""),
+            atoms.join("-"),
+            atoms.join("/"),
+            atoms
+              .map((atom, index) => (index % 2 === 0 ? capitalize(atom) : atom))
+              .join(""),
+          ]);
+
+          for (const alias of aliases) {
+            const candidate = `legal/${alias}.bin`;
+            const violations = findPrivateArtifactViolations([candidate]);
+            assert.equal(violations.length, 1, candidate);
+            assert.equal(violations[0].ruleId, ruleId, candidate);
+          }
+        }
+      }
+    }
+  }
+});
+
 test("rejects every concatenated signed-CLA suffix across case representations", () => {
   const protectedSuffixes = [
     "acceptance",
@@ -473,12 +647,48 @@ test("allows public CLA templates, contributor documentation, and benign technic
       "docs/2026contributoracceptanceprocess.md",
       "src/CLAsSignaturesSchema.ts",
       "src/classignaturesschema.ts",
+      "docs/contributorAcceptanceProcessV2.md",
+      "docs/contributoracceptanceprocessv2.md",
+      "src/contributorSignatureSchemaV2.ts",
+      "src/contributorsignatureschemav2.ts",
+      "docs/signedCLATemplateV2.md",
+      "docs/signedclatemplatev2.md",
+      "src/claSignatureSchemaV2.ts",
+      "src/classignatureschemav2.ts",
+      "src/CLAsSignaturesSchemaV2.ts",
       "docs/copyrightsignedclauses.md",
       "src/personalizationregistry.ts",
       "src/classificationregistry.ts",
     ]),
     []
   );
+});
+
+test("does not treat unknown text after protected terms as a public-document qualifier", () => {
+  const protectedPaths = new Map([
+    [
+      "signed-cla-storage",
+      [
+        "docs/signedCLASecretTemplate.md",
+        "docs/signed-cla-secret-template.md",
+      ],
+    ],
+    [
+      "contributor-record-storage",
+      [
+        "docs/contributorAcceptanceSecretProcess.md",
+        "docs/contributor-acceptance-secret-process.md",
+      ],
+    ],
+  ]);
+
+  for (const [ruleId, candidates] of protectedPaths) {
+    for (const candidate of candidates) {
+      const violations = findPrivateArtifactViolations([candidate]);
+      assert.equal(violations.length, 1, candidate);
+      assert.equal(violations[0].ruleId, ruleId, candidate);
+    }
+  }
 });
 
 test("package inventory uses the shared contributor-record policy", (t) => {
@@ -506,6 +716,21 @@ test("package inventory uses the shared contributor-record policy", (t) => {
   fs.closeSync(
     fs.openSync(path.join(packageRoot, "legal", "signedclabackup.pdf"), "w")
   );
+  fs.closeSync(
+    fs.openSync(
+      path.join(packageRoot, "legal", "acceptances-contributors.json"),
+      "w"
+    )
+  );
+  fs.closeSync(
+    fs.openSync(path.join(packageRoot, "legal", "cla-signed.pdf"), "w")
+  );
+  fs.closeSync(
+    fs.openSync(
+      path.join(packageRoot, "legal", "archiveprivate2026claregistrybackup.json"),
+      "w"
+    )
+  );
 
   const verifier = path.resolve(
     __dirname,
@@ -526,11 +751,12 @@ test("package inventory uses the shared contributor-record policy", (t) => {
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /csv-artifact: 1/u);
-  assert.match(result.stderr, /contributor-record-storage: 1/u);
-  assert.match(result.stderr, /signed-cla-storage: 1/u);
+  assert.match(result.stderr, /cla-contributor-registry: 1/u);
+  assert.match(result.stderr, /contributor-record-storage: 2/u);
+  assert.match(result.stderr, /signed-cla-storage: 2/u);
   assert.doesNotMatch(
     result.stderr,
-    /\.cache|legal\/|reports\/|signatures|signedcla|backup|windows-alias|\.json|\.csv/u
+    /\.cache|legal\/|reports\/|acceptances|contributors|signatures|signedcla|cla-signed|backup|windows-alias|\.json|\.csv/u
   );
 });
 
@@ -714,6 +940,57 @@ test("repository discovery retains tracked paths after an unstaged deletion", (t
   );
 });
 
+test("source-only gates reject working-tree and index-only semantic bypass families", (t) => {
+  const root = createTemporaryDirectory(t);
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+
+  const workingTreeAlias = "legal/acceptances-contributors/2026.json";
+  const indexOnlyAlias =
+    "legal/archiveprivate2026claregistrybackup.json";
+  const publicControl = "docs/contributorAcceptanceProcessV2.md";
+  for (const artifactPath of [workingTreeAlias, indexOnlyAlias, publicControl]) {
+    const absolutePath = path.join(root, artifactPath);
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.closeSync(fs.openSync(absolutePath, "w"));
+  }
+  execFileSync("git", ["add", "-f", "--", indexOnlyAlias, publicControl], {
+    cwd: root,
+  });
+  fs.rmSync(path.join(root, indexOnlyAlias));
+
+  const verifiers = [
+    {
+      args: [
+        path.resolve(__dirname, "../scripts/verify-private-artifacts.cjs"),
+        root,
+      ],
+      cwd: process.cwd(),
+    },
+    {
+      args: [
+        path.resolve(__dirname, "../scripts/verify-public-artifacts.cjs"),
+        "--source-only",
+      ],
+      cwd: root,
+    },
+  ];
+
+  for (const { args, cwd } of verifiers) {
+    const result = spawnSync(process.execPath, args, {
+      cwd,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /cla-contributor-registry: 1/u);
+    assert.match(result.stderr, /contributor-record-storage: 1/u);
+    assert.doesNotMatch(
+      result.stderr,
+      /legal\/|docs\/|acceptances|contributors|backup|2026|\.json|\.md/iu
+    );
+  }
+});
+
 test("repository gates reject staged contributor aliases without logging paths", (t) => {
   const root = createTemporaryDirectory(t);
   execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -736,6 +1013,13 @@ test("repository gates reject staged contributor aliases without logging paths",
     "legal/CLAsSubmissions.json",
     "legal/privateRegistryBackup.json",
     "legal/claRegistryBackup.json",
+    "legal/acceptances-contributors.json",
+    "legal/signed-v2-contributor-agreement.pdf",
+    "legal/privatecontributoracceptances.json",
+    "legal/cla-signed.pdf",
+    "legal/signedv2cla.pdf",
+    "legal/piiclassignatures.json",
+    "legal/archiveprivate2026claregistrybackup.json",
     "reports/windows-alias.csv. ",
   ];
   const legitimateControls = [
@@ -744,6 +1028,9 @@ test("repository gates reject staged contributor aliases without logging paths",
     "src/contributor-signature-schema.ts",
     "docs/signedCLATemplate.md",
     "src/claSignatureSchema.ts",
+    "docs/contributorAcceptanceProcessV2.md",
+    "src/contributorSignatureSchemaV2.ts",
+    "docs/signedCLATemplateV2.md",
   ];
   for (const artifactPath of [...protectedAliases, ...legitimateControls]) {
     const absolutePath = path.join(root, artifactPath);
@@ -779,10 +1066,10 @@ test("repository gates reject staged contributor aliases without logging paths",
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /csv-artifact: 1/u);
-    assert.match(result.stderr, /cla-contributor-registry: 1/u);
-    assert.match(result.stderr, /contributor-record-storage: 9/u);
+    assert.match(result.stderr, /cla-contributor-registry: 2/u);
+    assert.match(result.stderr, /contributor-record-storage: 12/u);
     assert.match(result.stderr, /private-registry: 1/u);
-    assert.match(result.stderr, /signed-cla-storage: 6/u);
+    assert.match(result.stderr, /signed-cla-storage: 9/u);
     assert.doesNotMatch(
       result.stderr,
       /legal\/|reports\/|windows-alias|signedcla|backup|acceptances|signatures|submissions|agreement|\.bin|\.json|\.pdf|\.csv/iu
@@ -931,4 +1218,16 @@ function caseVariants(value) {
 
 function capitalize(value) {
   return `${value[0].toLocaleUpperCase("en-US")}${value.slice(1)}`;
+}
+
+function permutations(values) {
+  if (values.length <= 1) {
+    return [values];
+  }
+
+  return values.flatMap((value, index) =>
+    permutations(values.filter((_, candidateIndex) => candidateIndex !== index)).map(
+      (suffix) => [value, ...suffix]
+    )
+  );
 }

@@ -30,18 +30,19 @@ enforcement boundaries:
    contributor registries with any extension, signed-CLA storage paths,
    contributor acceptance/signature/submission record aliases, signed
    contributor agreement aliases, and paths that combine a privacy marker with
-   a registry marker. The semantic matcher covers hierarchical and
-   separator-free terms. Direct aliases are also classified through an ASCII
-   case-folded representation independent of camel-case transitions, and both
-   singular and plural CLA boundaries recognise every protected concatenated
-   suffix family. A closed semantic vocabulary segments recognised archive,
-   backup, record, storage, documentation, and version wrappers before direct
-   aliases and around registry marker pairs; arbitrary substring prefixes do
-   not qualify. Unicode NFKC normalization runs before structural path handling
-   so compatibility separators, Windows and POSIX separators, and the optional
-   npm `package/` prefix reduce to one representation. Explicit
-   process, template, policy, schema, and validator files remain public, but a
-   matching component used as a directory fails closed. A separate
+   a registry marker. A single closed semantic vocabulary covers every
+   contributor, CLA, privacy, registry, record-category, agreement, wrapper,
+   and numeric/version term. It segments hierarchical, separator-free, and
+   mixed-boundary forms after case folding, then classifies protected marker
+   families independently of order. Reversed terms, an intervening archive,
+   backup, record, storage, or version wrapper, and a third protected marker
+   therefore cannot make an alias opaque; arbitrary substring prefixes still
+   do not qualify. Unicode NFKC normalization runs before structural path
+   handling so compatibility separators, Windows and POSIX separators, and the
+   optional npm `package/` prefix reduce to one representation. Explicit
+   process, template, policy, schema, and validator files with explicit compact
+   or separated numeric/version suffixes remain public, but a matching
+   component used as a directory fails closed. A separate
    classification copy removes Windows-ignored trailing dots and spaces from
    every component and structurally normalizes the result; raw package-member
    identity remains unchanged for exact allowlist and collision enforcement.

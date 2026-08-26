@@ -28,12 +28,13 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - Reject contributor acceptance, signature, submission, and signed-agreement
     record aliases, plus signed-CLA storage aliases, across hierarchical,
     case-insensitive separator-free, Windows, and Unicode compatibility path
-    forms while retaining explicit public contributor documentation files;
-    case-fold concatenated aliases independently of camel-case boundaries and
-    reject every protected suffix adjacent to singular or plural CLA terms.
-    Segment a closed wrapper vocabulary around separator-free protected aliases
-    and registry marker pairs so archive, backup, record, storage, and version
-    prefixes or suffixes cannot bypass the path-only gate.
+    forms while retaining explicit public contributor documentation files.
+    Classify one closed vocabulary of protected markers, record categories,
+    wrappers, and versions independently of order so reversed terms,
+    intervening wrappers, mixed token boundaries, or a third protected marker
+    cannot bypass contributor, CLA, or registry policy families. Compact and
+    separated numeric/version suffixes such as `V2` remain valid on terminal
+    public process, template, policy, schema, and validator documents.
   - Keep raw package-member identity and cardinality alongside normalized paths,
     report rejected private-path categories by count, and collapse exceptional
     traversal or verifier failures to allowlisted codes without logging path
