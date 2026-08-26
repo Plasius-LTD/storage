@@ -30,11 +30,13 @@ enforcement boundaries:
    contributor registries with any extension, signed-CLA storage paths,
    contributor acceptance/signature/submission record aliases, signed
    contributor agreement aliases, and paths that combine a privacy marker with
-   a registry marker. Unicode NFKC normalization runs before structural path
-   handling so compatibility separators, Windows and POSIX separators, and the
-   optional npm `package/` prefix reduce to one representation. Explicit
-   process, template, policy, schema, and validator files remain public, but a
-   matching component used as a directory fails closed.
+   a registry marker. The semantic matcher covers hierarchical and
+   separator-free camel/acronym terms. Unicode NFKC normalization runs before
+   structural path handling so compatibility separators, Windows and POSIX
+   separators, and the optional npm `package/` prefix reduce to one
+   representation. Explicit process, template, policy, schema, and validator
+   files remain public, but a matching component used as a directory fails
+   closed.
 3. `package.json.files` must be a non-empty explicit allowlist. Repository-root,
    wildcard, and complete `legal` directory entries are forbidden; only the
    exact public CLA Markdown documents are included.
@@ -76,7 +78,10 @@ privacy control must not be remotely bypassable.
 ## Consequences
 
 - Repository and package validation fail closed on protected paths without
-  reading candidate contents or logging suspected path values.
+  reading candidate contents or logging suspected path values. Policy
+  rejections expose only category counts, while exceptional traversal and
+  verifier failures collapse to allowlisted codes without raw messages or
+  stacks.
 - Public package surface changes require an intentional exact-allowlist update.
 - New protected path categories require a policy and regression-test update.
 - The targeted path rules complement rather than replace secret scanning,

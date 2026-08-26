@@ -9,8 +9,10 @@ const {
   collectRepositoryArtifactPaths,
   collectWorkingTreeArtifactPaths,
   compareExactPathAllowlist,
+  createSafeArtifactPolicyError,
   findPackageFilesPolicyViolations,
   findPrivateArtifactViolations,
+  formatSafeArtifactPolicyError,
   normalizeArtifactPath,
 } = require("../scripts/private-artifact-policy.cjs");
 
@@ -81,6 +83,29 @@ test("rejects privacy-marked registry paths and signed CLA storage", () => {
   );
 });
 
+test("rejects hierarchical and compatibility-spelled signed CLA storage", () => {
+  const protectedPaths = [
+    "legal/signed/CLAs/record.pdf",
+    "legal/signed＼clas/record.pdf",
+    "legal/CLA/signatures/record.pdf",
+    "legal/CLA/acceptances/record.pdf",
+    "legal/CLA/submissions/record.pdf",
+    "legal/signed/archive/CLAs/record.pdf",
+    "legal/CLA/archive/signatures/record.pdf",
+    "legal/signedCLA.pdf",
+    "legal/claSignatures.json",
+    "legal/signedCLABackup.pdf",
+    "legal/claSignaturesBackup.json",
+    "legal/signed-cla-backup.pdf",
+  ];
+
+  for (const candidate of protectedPaths) {
+    const violations = findPrivateArtifactViolations([candidate]);
+    assert.equal(violations.length, 1, candidate);
+    assert.equal(violations[0].ruleId, "signed-cla-storage", candidate);
+  }
+});
+
 test("rejects contributor record and signed agreement aliases", () => {
   const protectedPaths = [
     "legal/contributor-acceptances.json",
@@ -106,6 +131,14 @@ test("rejects contributor record and signed agreement aliases", () => {
     "legal/contributor‑acceptances.json",
     "legal/contributor-acceptances~backup.json",
     "legal/signed+contributor+agreement.pdf",
+    "legal/contributorAcceptances.json",
+    "legal/contributorSignatures.json",
+    "legal/contributorSubmissions.pdf",
+    "legal/signedContributorAgreement.pdf",
+    "legal/contributorSignedAgreement.pdf",
+    "legal/contributorAgreementSignature.pdf",
+    "legal/contributorSignaturesBackup.json",
+    "legal/signedContributorAgreementBackup.pdf",
     "legal/ＣＯＮＴＲＩＢＵＴＯＲ／ＡＣＣＥＰＴＡＮＣＥＳ／record.json",
     "legal/signed＼contributor＼agreement.pdf",
     "legal/signed﹨contributor﹨agreement.pdf",
@@ -140,6 +173,12 @@ test("allows public CLA templates, contributor documentation, and benign technic
       "src/contributor-acceptance-format.ts",
       "docs/contributor+acceptance+process.md",
       "src/contributor+signature+schema.ts",
+      "docs/contributorAcceptanceProcess.md",
+      "docs/signedContributorAgreementTemplate.md",
+      "src/contributorSignatureSchema.ts",
+      "docs/signed-cla-template.md",
+      "docs/signedCLATemplate.md",
+      "src/claSignatureSchema.ts",
     ]),
     []
   );
@@ -259,6 +298,97 @@ test("working-tree discovery is path-only and skips dependency metadata", (t) =>
   }
 });
 
+test("verifier entry points redact exceptional traversal paths and stacks", (t) => {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "private-artifact-traversal-")
+  );
+  const protectedDirectory = path.join(
+    root,
+    "legal",
+    "contributor-acceptances-SYNTHETIC-SENSITIVE"
+  );
+  fs.mkdirSync(protectedDirectory, { recursive: true });
+  fs.chmodSync(protectedDirectory, 0o000);
+  t.after(() => {
+    try {
+      fs.chmodSync(protectedDirectory, 0o700);
+    } catch {
+      // The temporary directory may already have been removed after a failure.
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+
+  const verifiers = [
+    {
+      args: [
+        path.resolve(__dirname, "../scripts/verify-private-artifacts.cjs"),
+        root,
+      ],
+      cwd: process.cwd(),
+    },
+    {
+      args: [
+        path.resolve(__dirname, "../scripts/verify-public-artifacts.cjs"),
+      ],
+      cwd: root,
+    },
+    {
+      args: [path.resolve(__dirname, "../scripts/verify-public-package.cjs")],
+      cwd: root,
+    },
+  ];
+
+  for (const { args, cwd } of verifiers) {
+    const result = spawnSync(process.execPath, args, {
+      cwd,
+      encoding: "utf8",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    assert.equal(result.status, 1);
+    assert.match(output, /working-tree-enumeration-failed/u);
+    assert.doesNotMatch(
+      output,
+      /SYNTHETIC|contributor|acceptances|EACCES|permission denied|scandir|\n\s*at\s|private-artifact-policy\.cjs:\d+/iu
+    );
+  }
+});
+
+test("safe error formatting rejects untrusted messages and malformed metadata", () => {
+  const sensitiveError = new Error(
+    "SYNTHETIC-SENSITIVE legal/contributor-acceptances.json"
+  );
+  assert.equal(
+    formatSafeArtifactPolicyError(
+      sensitiveError,
+      "private-artifact-check-failed"
+    ),
+    "code=private-artifact-check-failed"
+  );
+
+  const safeError = createSafeArtifactPolicyError(
+    "private-artifact-policy-rejected",
+    "contributor-record-storage: 2, signed-cla-storage: 1"
+  );
+  assert.equal(
+    formatSafeArtifactPolicyError(safeError, "fallback-failed"),
+    "code=private-artifact-policy-rejected; counts=contributor-record-storage: 2, signed-cla-storage: 1"
+  );
+  assert.throws(
+    () => createSafeArtifactPolicyError("SYNTHETIC/SENSITIVE"),
+    /kebab-case/u
+  );
+  assert.throws(
+    () =>
+      createSafeArtifactPolicyError(
+        "private-artifact-policy-rejected",
+        "legal/contributor-acceptances.json: 1"
+      ),
+    /invalid shape/u
+  );
+});
+
 test("repository discovery retains tracked paths after an unstaged deletion", (t) => {
   const root = createTemporaryDirectory(t);
   execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -286,11 +416,17 @@ test("repository gates reject staged contributor aliases without logging paths",
     "legal/contributor-acceptances.json",
     "legal/contributor-signatures.json",
     "legal/signed-contributor-agreement.pdf",
+    "legal/contributorSignatures.json",
+    "legal/signedContributorAgreement.pdf",
+    "legal/signed/CLAs/record.pdf",
+    "legal/CLA/signatures/record.pdf",
   ];
   const legitimateControls = [
     "docs/contributor-acceptance-process.md",
     "docs/signed-contributor-agreement-template.md",
     "src/contributor-signature-schema.ts",
+    "docs/signedCLATemplate.md",
+    "src/claSignatureSchema.ts",
   ];
   for (const artifactPath of [...protectedAliases, ...legitimateControls]) {
     const absolutePath = path.join(root, artifactPath);
@@ -325,7 +461,8 @@ test("repository gates reject staged contributor aliases without logging paths",
     });
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /contributor-record-storage: 3/u);
+    assert.match(result.stderr, /contributor-record-storage: 5/u);
+    assert.match(result.stderr, /signed-cla-storage: 2/u);
     assert.doesNotMatch(
       result.stderr,
       /legal\/|acceptances|signatures|agreement|\.json|\.pdf/u

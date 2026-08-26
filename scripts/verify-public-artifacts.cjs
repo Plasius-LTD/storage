@@ -6,7 +6,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   collectRepositoryArtifactPaths,
+  createSafeArtifactPolicyError,
   findPrivateArtifactViolations,
+  formatSafeArtifactPolicyError,
   summarizePrivateArtifactViolations,
 } = require("./private-artifact-policy.cjs");
 
@@ -31,11 +33,7 @@ function run(command, args, options = {}) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error || result.status !== 0) {
-    const detail = result.stderr.trim().split("\n")[0];
-    throw new Error(
-      `${command} failed${detail ? `: ${detail}` : "."}`,
-      { cause: result.error }
-    );
+    throw createSafeArtifactPolicyError("subprocess-failed");
   }
   return result.stdout;
 }
@@ -147,8 +145,9 @@ function validatePackage(root, packageDirectory) {
     .filter((entry) => typeof entry === "string");
   const violations = findPrivateArtifactViolations(artifactPaths);
   if (violations.length > 0) {
-    throw new Error(
-      `npm package inventory contains prohibited path metadata (${summarizePrivateArtifactViolations(violations)}); values were not logged.`
+    throw createSafeArtifactPolicyError(
+      "private-artifact-policy-rejected",
+      summarizePrivateArtifactViolations(violations)
     );
   }
 }
@@ -163,8 +162,9 @@ function main() {
   // prohibited path is present, so this process never asks npm to read it.
   const sourceMatches = collectSourceMatches(root);
   if (sourceMatches.length > 0) {
-    throw new Error(
-      `Source contains prohibited path metadata (${sourceMatches.length} match(es)); values were not logged.`
+    throw createSafeArtifactPolicyError(
+      "legacy-private-artifact-rejected",
+      `legacy-private-artifact: ${sourceMatches.length}`
     );
   }
 
@@ -185,8 +185,9 @@ function enforcePrivateArtifactPolicy(root) {
     collectRepositoryArtifactPaths(root)
   );
   if (violations.length > 0) {
-    throw new Error(
-      `Private artifact policy failed (${summarizePrivateArtifactViolations(violations)}); file contents and path values were not logged.`
+    throw createSafeArtifactPolicyError(
+      "private-artifact-policy-rejected",
+      summarizePrivateArtifactViolations(violations)
     );
   }
 }
@@ -194,6 +195,11 @@ function enforcePrivateArtifactPolicy(root) {
 try {
   main();
 } catch (error) {
-  console.error(`Public artifact integrity failed: ${error.message}`);
+  console.error(
+    `Public artifact integrity failed (${formatSafeArtifactPolicyError(
+      error,
+      "public-artifact-check-failed"
+    )}).`
+  );
   process.exitCode = 1;
 }

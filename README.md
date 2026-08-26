@@ -324,14 +324,18 @@ messages expose rule counts rather than suspected path values.
 `privacy:check` rejects protected paths in the working tree and proposed Git
 index. This includes contributor acceptance, signature, submission, and signed
 agreement record aliases across hierarchical, Windows, and Unicode
-compatibility path forms. Explicit process, template, policy, schema, and
-validator documents remain public only when they are files, not record
-directories. `pack:check` applies the same rules to the final npm path manifest,
-requires the explicit `package.json.files` allowlist, and rejects any package
-path not present in the exact public-package allowlist. Raw package identities
-and cardinality are retained so Unicode-normalized aliases or duplicate members
-cannot disappear into the allowlist comparison. Public CLA templates remain
-distributable, but broad legal-directory entries are forbidden.
+compatibility path forms, separator-free camel/acronym forms, and hierarchical
+signed-CLA categories. Explicit process, template, policy, schema, and validator
+documents remain public only when they are files, not record directories.
+Policy rejections expose only rule counts; exceptional traversal or verifier
+failures expose only allowlisted codes, never candidate paths, raw exception
+messages, or stacks. `pack:check` applies the same rules to the final npm path
+manifest, requires the explicit `package.json.files` allowlist, and rejects any
+package path not present in the exact public-package allowlist. Raw package
+identities and cardinality are retained so Unicode-normalized aliases or
+duplicate members cannot disappear into the allowlist comparison. Public CLA
+templates remain distributable, but broad legal-directory entries are
+forbidden.
 
 Every requested npm package inventory is evaluated by the same private-path
 classifier, including packages rooted below otherwise excluded tool/cache

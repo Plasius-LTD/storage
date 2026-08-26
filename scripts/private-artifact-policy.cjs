@@ -30,11 +30,16 @@ const REGISTRY_MARKERS = new Set([
 const CLA_MARKERS = new Set(["cla", "clas", "contributor", "contributors"]);
 
 const CONTRIBUTOR_PRIVATE_RECORD_PATTERN =
-  /(?:^|[^a-z0-9])(?:(?:contributors?[^a-z0-9]+(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]+contributors?[^a-z0-9]+(?:agreements?|clas?))|(?:contributors?[^a-z0-9]+signed[^a-z0-9]+(?:agreements?|clas?))|(?:contributors?[^a-z0-9]+(?:agreements?|clas?)[^a-z0-9]+(?:signed|signatures?)))(?=$|[^a-z0-9])/giu;
+  /(?:^|[^a-z0-9])(?:(?:contributors?[^a-z0-9]*(?:acceptances?|signatures?|submissions?))|(?:signed[^a-z0-9]*contributors?[^a-z0-9]*(?:agreements?|clas?))|(?:contributors?[^a-z0-9]*signed[^a-z0-9]*(?:agreements?|clas?))|(?:contributors?[^a-z0-9]*(?:agreements?|clas?)[^a-z0-9]*(?:signed|signatures?)))(?=$|[^a-z0-9])/giu;
+
+const SIGNED_CLA_PRIVATE_RECORD_PATTERN =
+  /(?:^|[^a-z0-9])(?:(?:signed[^a-z0-9]*clas?)|(?:cla[^a-z0-9]*(?:acceptances?|signatures?|submissions?)))(?=$|[^a-z0-9])/giu;
+
+const safeArtifactPolicyErrors = new WeakMap();
 
 const PUBLIC_CONTRIBUTOR_DOCUMENT_QUALIFIER_PATTERNS = Object.freeze([
-  /^[^a-z0-9]+(?:process|template|policy|guides?|guidance|documentation|docs?|instructions?|examples?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:md|mdx|rst|adoc|txt|pdf)$/iu,
-  /^[^a-z0-9]+(?:schema|validator|formats?|spec(?:ification)?s?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:[cm]?[jt]sx?|d\.[cm]?[jt]s|mdx?|json|ya?ml)$/iu,
+  /^[^a-z0-9]*(?:process|template|policy|guides?|guidance|documentation|docs?|instructions?|examples?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:md|mdx|rst|adoc|txt|pdf)$/iu,
+  /^[^a-z0-9]*(?:schema|validator|formats?|spec(?:ification)?s?)(?:[^a-z0-9]+v?[0-9]+(?:[^a-z0-9]+[0-9]+)*)?\.(?:[cm]?[jt]sx?|d\.[cm]?[jt]s|mdx?|json|ya?ml)$/iu,
 ]);
 
 const BROAD_PACKAGE_FILE_ENTRIES = new Set([
@@ -73,10 +78,7 @@ const PRIVATE_ARTIFACT_RULES = Object.freeze([
     id: "signed-cla-storage",
     description:
       "Signed CLA submissions and signature records must remain in approved private systems.",
-    matches: (artifactPath) =>
-      /(?:^|\/)(?:signed[ ._-]*clas?|cla[ ._-]*(?:acceptances?|signatures?|submissions?))(?:\/|$)/iu.test(
-        artifactPath
-      ),
+    matches: (artifactPath) => matchesSignedClaStorage(artifactPath),
   }),
   Object.freeze({
     id: "private-registry",
@@ -130,12 +132,61 @@ function normalizeArtifactPath(artifactPath) {
  * @returns {boolean}
  */
 function matchesContributorRecordStorage(artifactPath) {
-  for (const match of artifactPath.matchAll(CONTRIBUTOR_PRIVATE_RECORD_PATTERN)) {
+  if (
+    matchesDirectPrivateRecordStorage(
+      artifactPath,
+      CONTRIBUTOR_PRIVATE_RECORD_PATTERN
+    )
+  ) {
+    return true;
+  }
+
+  return matchesHierarchicalContributorRecordStorage(artifactPath);
+}
+
+/**
+ * Classify signed CLA categories in direct, concatenated, compatibility-
+ * normalized, or hierarchical forms while retaining terminal public docs.
+ *
+ * @param {string} artifactPath
+ * @returns {boolean}
+ */
+function matchesSignedClaStorage(artifactPath) {
+  if (
+    matchesDirectPrivateRecordStorage(
+      artifactPath,
+      SIGNED_CLA_PRIVATE_RECORD_PATTERN
+    )
+  ) {
+    return true;
+  }
+
+  const words = extractSemanticWords(artifactPath);
+  return [
+    [isSignedWord, isClaWord],
+    [isClaWord, isRecordCategoryWord],
+  ].some((sequence) => hasCrossComponentSequence(words, sequence));
+}
+
+/**
+ * Apply a direct protected-category matcher and permit only an allowlisted
+ * documentation qualifier on the terminal component.
+ *
+ * @param {string} artifactPath
+ * @param {RegExp} pattern
+ * @returns {boolean}
+ */
+function matchesDirectPrivateRecordStorage(artifactPath, pattern) {
+  const semanticPath = artifactPath
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1-$2")
+    .replace(/([a-z0-9])([A-Z])/gu, "$1-$2");
+
+  for (const match of semanticPath.matchAll(pattern)) {
     const phraseEnd = match.index + match[0].length;
-    const nextSeparator = artifactPath.indexOf("/", phraseEnd);
-    const componentSuffix = artifactPath.slice(
+    const nextSeparator = semanticPath.indexOf("/", phraseEnd);
+    const componentSuffix = semanticPath.slice(
       phraseEnd,
-      nextSeparator === -1 ? artifactPath.length : nextSeparator
+      nextSeparator === -1 ? semanticPath.length : nextSeparator
     );
     const isPublicDocumentation =
       nextSeparator === -1 &&
@@ -147,7 +198,7 @@ function matchesContributorRecordStorage(artifactPath) {
     }
   }
 
-  return matchesHierarchicalContributorRecordStorage(artifactPath);
+  return false;
 }
 
 /**
@@ -159,37 +210,84 @@ function matchesContributorRecordStorage(artifactPath) {
  * @returns {boolean}
  */
 function matchesHierarchicalContributorRecordStorage(artifactPath) {
-  const words = artifactPath.split("/").flatMap((component, componentIndex) =>
+  const words = extractSemanticWords(artifactPath);
+
+  return [
+    [isContributorWord, isRecordCategoryWord],
+    [isSignedWord, isContributorWord, isAgreementWord],
+    [isContributorWord, isSignedWord, isAgreementWord],
+    [isContributorWord, isAgreementWord, isSignedOrSignatureWord],
+  ].some((sequence) => hasCrossComponentSequence(words, sequence));
+}
+
+/**
+ * Split path components into policy words, including common camel-case and
+ * acronym transitions, without changing the artifact identity used elsewhere.
+ *
+ * @param {string} artifactPath
+ * @returns {Array<{componentIndex: number, word: string}>}
+ */
+function extractSemanticWords(artifactPath) {
+  return artifactPath.split("/").flatMap((component, componentIndex) =>
     component
-      .toLocaleLowerCase("en-US")
-      .split(/[^a-z0-9]+/u)
+      .split(/[^a-z0-9]+/iu)
       .filter(Boolean)
-      .map((word) => ({ componentIndex, word }))
+      .flatMap((segment) => {
+        const loweredSegment = segment.toLocaleLowerCase("en-US");
+        const words = isSemanticPolicyWord(loweredSegment)
+          ? [loweredSegment]
+          : segment
+              .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1 $2")
+              .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+              .toLocaleLowerCase("en-US")
+              .split(" ");
+        return words.map((word) => ({ componentIndex, word }));
+      })
   );
-  const isContributor = (word) =>
-    word === "contributor" || word === "contributors";
-  const isRecordCategory = (word) =>
+}
+
+function isSemanticPolicyWord(word) {
+  return (
+    isContributorWord(word) ||
+    isRecordCategoryWord(word) ||
+    isSignedWord(word) ||
+    isAgreementWord(word)
+  );
+}
+
+function isContributorWord(word) {
+  return word === "contributor" || word === "contributors";
+}
+
+function isRecordCategoryWord(word) {
+  return (
     word === "acceptance" ||
     word === "acceptances" ||
     word === "signature" ||
     word === "signatures" ||
     word === "submission" ||
-    word === "submissions";
-  const isSigned = (word) => word === "signed";
-  const isAgreement = (word) =>
+    word === "submissions"
+  );
+}
+
+function isSignedWord(word) {
+  return word === "signed";
+}
+
+function isClaWord(word) {
+  return word === "cla" || word === "clas";
+}
+
+function isAgreementWord(word) {
+  return (
     word === "agreement" ||
     word === "agreements" ||
-    word === "cla" ||
-    word === "clas";
-  const isSignedOrSignature = (word) =>
-    isSigned(word) || word === "signature" || word === "signatures";
+    isClaWord(word)
+  );
+}
 
-  return [
-    [isContributor, isRecordCategory],
-    [isSigned, isContributor, isAgreement],
-    [isContributor, isSigned, isAgreement],
-    [isContributor, isAgreement, isSignedOrSignature],
-  ].some((sequence) => hasCrossComponentSequence(words, sequence));
+function isSignedOrSignatureWord(word) {
+  return isSignedWord(word) || word === "signature" || word === "signatures";
 }
 
 /**
@@ -279,7 +377,12 @@ function collectWorkingTreeArtifactPaths(rootDirectory = process.cwd()) {
   const artifactPaths = [];
 
   function visit(directory, relativeDirectory) {
-    const entries = fs.readdirSync(directory, { withFileTypes: true });
+    let entries;
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      throw createSafeArtifactPolicyError("working-tree-enumeration-failed");
+    }
     for (const entry of entries) {
       if (EXCLUDED_DIRECTORY_NAMES.has(entry.name.toLocaleLowerCase("en-US"))) {
         continue;
@@ -312,15 +415,20 @@ function collectWorkingTreeArtifactPaths(rootDirectory = process.cwd()) {
  * @returns {string[]}
  */
 function collectGitIndexArtifactPaths(rootDirectory = process.cwd()) {
-  const output = execFileSync(
-    "git",
-    ["ls-files", "--cached", "-z", "--"],
-    {
-      cwd: path.resolve(rootDirectory),
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }
-  );
+  let output;
+  try {
+    output = execFileSync(
+      "git",
+      ["ls-files", "--cached", "-z", "--"],
+      {
+        cwd: path.resolve(rootDirectory),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    );
+  } catch {
+    throw createSafeArtifactPolicyError("git-index-enumeration-failed");
+  }
 
   return sortPaths(
     output
@@ -481,6 +589,50 @@ function summarizePrivateArtifactViolations(violations) {
     .join(", ");
 }
 
+/**
+ * Create a policy exception whose externally renderable metadata contains only
+ * an allowlisted code and optional rule counts. The original exception, path,
+ * message, and stack are deliberately not retained.
+ *
+ * @param {string} code
+ * @param {string} [safeCounts]
+ * @returns {Error}
+ */
+function createSafeArtifactPolicyError(code, safeCounts = "") {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(code)) {
+    throw new TypeError("Safe artifact policy error codes must be kebab-case.");
+  }
+  if (
+    safeCounts &&
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*: [1-9][0-9]*(?:, [a-z0-9]+(?:-[a-z0-9]+)*: [1-9][0-9]*)*$/u.test(
+      safeCounts
+    )
+  ) {
+    throw new TypeError("Safe artifact policy counts have an invalid shape.");
+  }
+
+  const error = new Error("Artifact policy operation failed safely.");
+  safeArtifactPolicyErrors.set(error, Object.freeze({ code, safeCounts }));
+  return error;
+}
+
+/**
+ * Render only metadata produced by createSafeArtifactPolicyError. Unknown
+ * exceptions collapse to the caller-provided safe fallback code.
+ *
+ * @param {unknown} error
+ * @param {string} fallbackCode
+ * @returns {string}
+ */
+function formatSafeArtifactPolicyError(error, fallbackCode) {
+  const metadata =
+    error instanceof Error ? safeArtifactPolicyErrors.get(error) : undefined;
+  const code = metadata?.code ?? fallbackCode;
+  return metadata?.safeCounts
+    ? `code=${code}; counts=${metadata.safeCounts}`
+    : `code=${code}`;
+}
+
 function normalizePackageFilesEntry(entry) {
   const normalized = path.posix.normalize(entry.trim().replace(/\\/gu, "/"));
   const withoutPrefix = normalized.startsWith("./")
@@ -537,8 +689,10 @@ module.exports = {
   collectRepositoryArtifactPaths,
   collectWorkingTreeArtifactPaths,
   compareExactPathAllowlist,
+  createSafeArtifactPolicyError,
   findPackageFilesPolicyViolations,
   findPrivateArtifactViolations,
+  formatSafeArtifactPolicyError,
   normalizeArtifactPath,
   PRIVATE_ARTIFACT_RULES,
   summarizePrivateArtifactViolations,

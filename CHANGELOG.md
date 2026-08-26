@@ -26,11 +26,13 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     privacy-marked registries from entering source control or release artifacts
     without inspecting candidate file contents.
   - Reject contributor acceptance, signature, submission, and signed-agreement
-    record aliases across hierarchical, Windows, and Unicode compatibility path
-    forms while retaining explicit public contributor documentation files.
+    record aliases, plus signed-CLA storage aliases, across hierarchical,
+    separator-free, Windows, and Unicode compatibility path forms while
+    retaining explicit public contributor documentation files.
   - Keep raw package-member identity and cardinality alongside normalized paths,
-    and report rejected private-path categories by count without logging path
-    values.
+    report rejected private-path categories by count, and collapse exceptional
+    traversal or verifier failures to allowlisted codes without logging path
+    values, raw exception messages, or stacks.
   - Apply the shared contributor-record classifier to every requested npm
     inventory, including package roots beneath excluded tool/cache directories,
     and include every changed gate executable in combined LCOV.

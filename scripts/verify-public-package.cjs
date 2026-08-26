@@ -6,8 +6,10 @@ const path = require("node:path");
 const {
   collectRepositoryArtifactPaths,
   compareExactPathAllowlist,
+  createSafeArtifactPolicyError,
   findPackageFilesPolicyViolations,
   findPrivateArtifactViolations,
+  formatSafeArtifactPolicyError,
   summarizePrivateArtifactViolations,
 } = require("./private-artifact-policy.cjs");
 
@@ -95,11 +97,9 @@ async function main() {
 
     const privateArtifactViolations = findPrivateArtifactViolations(paths);
     if (privateArtifactViolations.length > 0) {
-      throw new Error(
-        formatPrivateArtifactViolations(
-          "Public package contains prohibited private artifact paths",
-          privateArtifactViolations
-        )
+      throw createSafeArtifactPolicyError(
+        "private-package-artifact-rejected",
+        summarizePrivateArtifactViolations(privateArtifactViolations)
       );
     }
 
@@ -200,11 +200,9 @@ function verifyRepositoryPrivateArtifactPolicy() {
     collectRepositoryArtifactPaths(process.cwd())
   );
   if (violations.length > 0) {
-    throw new Error(
-      formatPrivateArtifactViolations(
-        "Public package check stopped before npm pack because prohibited repository paths were found",
-        violations
-      )
+    throw createSafeArtifactPolicyError(
+      "private-repository-artifact-rejected",
+      summarizePrivateArtifactViolations(violations)
     );
   }
 }
@@ -234,10 +232,6 @@ function verifyPackageFilesAllowlist() {
       )
     );
   }
-}
-
-function formatPrivateArtifactViolations(label, violations) {
-  return `${label} (${summarizePrivateArtifactViolations(violations)}); file contents and path values were not logged.`;
 }
 
 function formatAllowlistDifference(label, comparison) {
@@ -469,7 +463,12 @@ function parseNpmPackJson(rawOutput) {
   return JSON.parse(rawOutput.slice(start, end + 1));
 }
 
-main().catch((cause) => {
-  console.error(cause instanceof Error ? cause.message : cause);
+main().catch((error) => {
+  console.error(
+    `Public package check failed (${formatSafeArtifactPolicyError(
+      error,
+      "public-package-check-failed"
+    )}).`
+  );
   process.exit(1);
 });
