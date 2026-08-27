@@ -75,7 +75,7 @@ class MemoryLeaseClient {
 class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
   readonly blobs = new Map<string, StoredBlob>();
   readonly operations: Array<{
-    type: "download" | "list" | "upload";
+    type: "download" | "list" | "properties" | "upload";
     path: string;
     options?: JsonPacketBlobUploadOptions;
     listOptions?: JsonPacketBlobListOptions;
@@ -88,6 +88,7 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
     options: JsonPacketBlobUploadOptions
   ) => void | Promise<void>;
   onDownload?: (path: string) => void | Promise<void>;
+  onProperties?: (path: string) => void | Promise<void>;
   onList?: (
     options: JsonPacketBlobListOptions,
     settings: JsonPacketBlobPageSettings
@@ -142,6 +143,21 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
           etag: blob.etag,
         };
         return response;
+      },
+      getProperties: async (options) => {
+        this.operations.push({ type: "properties", path });
+        await this.onProperties?.(path);
+        if (options?.abortSignal?.aborted) {
+          throw storageFailure(499, "AbortError");
+        }
+        const blob = this.blobs.get(path);
+        if (!blob) throw storageFailure(404, "BlobNotFound");
+        return {
+          contentLength: blob.bytes.byteLength,
+          contentType: blob.contentType,
+          metadata: { ...blob.metadata },
+          etag: blob.etag,
+        };
       },
       getBlobLeaseClient: () => {
         let lease = this.leases.get(path);
@@ -216,6 +232,10 @@ interface SafePacket {
   readonly intentIds: readonly string[];
 }
 
+interface IndexedSafePacket extends SafePacket {
+  readonly acceptedAt: string;
+}
+
 function schema<T>(
   entityType: string,
   validate: (input: unknown) => T | undefined,
@@ -281,6 +301,26 @@ const checkpointSchema = schema<{ cursor: number; revision: number }>(
   }
 );
 
+const indexedPacketSchema = schema<IndexedSafePacket>(
+  "feedbackIndexedBugPacket",
+  (input) => {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      return undefined;
+    }
+    const candidate = input as Record<string, unknown>;
+    const base = packetSchema.validate(candidate);
+    if (
+      !base.valid ||
+      base.value === undefined ||
+      typeof candidate.acceptedAt !== "string" ||
+      new Date(candidate.acceptedAt).toISOString() !== candidate.acceptedAt
+    ) {
+      return undefined;
+    }
+    return { ...base.value, acceptedAt: candidate.acceptedAt };
+  }
+);
+
 const kindConfig: ImmutableJsonPacketKindConfig<SafePacket> = {
   prefix: "feedback/bugs",
   packetSchema,
@@ -296,6 +336,44 @@ function packet(overrides: Partial<SafePacket> = {}): SafePacket {
     surfaceId: "gameplay",
     intentIds: ["controls"],
     ...overrides,
+  };
+}
+
+function indexedPacket(
+  acceptedAt: string,
+  overrides: Partial<SafePacket> = {}
+): IndexedSafePacket {
+  return { ...packet(overrides), acceptedAt };
+}
+
+function createIndexedStore(
+  container = new MemoryJsonBlobContainer(),
+  clock: () => Date = () => new Date("2026-07-18T13:05:00.000Z"),
+  partition: "hour" | "day" = "hour"
+) {
+  return {
+    container,
+    store: createImmutableJsonPacketStore({
+      container,
+      kinds: {
+        bug: {
+          ...kindConfig,
+          packetSchema: indexedPacketSchema,
+          timeIndex: {
+            prefix: "feedback-index/bugs",
+            timestampField: "acceptedAt",
+            partition,
+          },
+        },
+      },
+      timeoutMs: 1_000,
+      maxPacketBytes: 8_192,
+      maxReadBytes: 64 * 1024,
+      maxListPageItems: 10,
+      maxListPageBytes: 64 * 1024,
+      maxManifestEntries: 100,
+      clock,
+    }),
   };
 }
 
@@ -1560,5 +1638,469 @@ describe("processor coordination records", () => {
     await expect(
       createStore(container).store.acquireLease("bug", "hourly-materializer")
     ).rejects.toMatchObject({ code: "STORAGE_OPERATION_FAILED" });
+  });
+
+  it("validates fixed accepted-time index configuration before Blob access", () => {
+    const container = new MemoryJsonBlobContainer();
+    const invalid = [
+      { prefix: "feedback/bugs/index", timestampField: "acceptedAt", partition: "hour" },
+      { prefix: "feedback-index/bugs", timestampField: "narrative", partition: "hour" },
+      { prefix: "feedback-index/bugs", timestampField: "acceptedAt", partition: "week" },
+    ] as const;
+
+    for (const timeIndex of invalid) {
+      expect(() =>
+        createImmutableJsonPacketStore({
+          container,
+          kinds: {
+            bug: { ...kindConfig, packetSchema: indexedPacketSchema, timeIndex },
+          },
+        })
+      ).toThrowError(expect.objectContaining({ code: "INVALID_CONFIG" }));
+    }
+    expect(container.operations).toHaveLength(0);
+  });
+
+  it("indexes packet-first, reads one complete aligned window, and exactly replays", async () => {
+    const { container, store } = createIndexedStore();
+    const packetId = "bug_01j1te5t000000000000001101";
+    const acceptedAt = "2026-07-18T12:34:56.000Z";
+
+    const first = await store.writePacket(
+      "bug",
+      packetId,
+      indexedPacket(acceptedAt)
+    );
+    const replay = await store.writePacket(
+      "bug",
+      packetId,
+      indexedPacket(acceptedAt)
+    );
+
+    expect(first.replayed).toBe(false);
+    expect(replay.replayed).toBe(true);
+    expect(
+      container.operations
+        .filter((operation) => operation.type === "upload")
+        .map((operation) => operation.path)
+        .slice(0, 2)
+    ).toEqual([
+      `feedback/bugs/packets/${packetId}.json`,
+      "feedback-index/bugs/windows/2026/07/18/12.json",
+    ]);
+
+    await expect(
+      store.readPacketTimeWindow("bug", {
+        windowStart: "2026-07-18T12:00:00.000Z",
+        windowEnd: "2026-07-18T13:00:00.000Z",
+        maxItems: 10,
+        maxBytes: 64 * 1024,
+      })
+    ).resolves.toMatchObject({
+      kind: "bug",
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+      complete: true,
+      packets: [
+        {
+          packetId,
+          acceptedAt,
+          schemaId: "feedbackIndexedBugPacket",
+          schemaVersion: "1.0.0",
+          packet: indexedPacket(acceptedAt),
+        },
+      ],
+    });
+  });
+
+  it("repairs a missing index after an ambiguous cross-Blob failure", async () => {
+    const { container, store } = createIndexedStore();
+    const packetId = "bug_01j1te5t000000000000001102";
+    const indexPath = "feedback-index/bugs/windows/2026/07/18/12.json";
+    let failIndexOnce = true;
+    container.onUpload = (path) => {
+      if (path === indexPath && failIndexOnce) {
+        failIndexOnce = false;
+        throw storageFailure(
+          503,
+          "ServerBusy",
+          "provider-private-detail?sig=synthetic-secret"
+        );
+      }
+    };
+
+    const error = await store
+      .writePacket(
+        "bug",
+        packetId,
+        indexedPacket("2026-07-18T12:10:00.000Z")
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      code: "STORAGE_OPERATION_FAILED",
+      diagnostic: { operation: "write-packet", retryable: true },
+      cause: { redacted: true },
+    });
+    expect(inspect(error, { depth: 10 })).not.toContain("synthetic-secret");
+    expect(container.blobs.has(`feedback/bugs/packets/${packetId}.json`)).toBe(true);
+    expect(container.blobs.has(indexPath)).toBe(false);
+
+    await expect(
+      store.writePacket(
+        "bug",
+        packetId,
+        indexedPacket("2026-07-18T12:10:00.000Z")
+      )
+    ).resolves.toMatchObject({ replayed: true });
+    expect(container.blobs.has(indexPath)).toBe(true);
+  });
+
+  it("rebuilds a deleted head on replay and keeps packet payloads out of the index", async () => {
+    const { container, store } = createIndexedStore();
+    const packetId = "bug_01j1te5t000000000000001111";
+    const indexPath = "feedback-index/bugs/windows/2026/07/18/12.json";
+    await store.writePacket(
+      "bug",
+      packetId,
+      indexedPacket("2026-07-18T12:20:00.000Z", {
+        surfaceId: "private-synthetic-safe-id",
+        intentIds: ["synthetic-derived-intent"],
+      })
+    );
+    const storedIndex = container.blobs.get(indexPath);
+    if (!storedIndex) throw new Error("missing test index");
+    const indexText = new TextDecoder().decode(storedIndex.bytes);
+    expect(indexText).not.toContain("private-synthetic-safe-id");
+    expect(indexText).not.toContain("synthetic-derived-intent");
+    expect(indexText).not.toContain("surfaceId");
+    expect(indexText).not.toContain("intentIds");
+
+    container.blobs.delete(indexPath);
+    await expect(
+      store.writePacket(
+        "bug",
+        packetId,
+        indexedPacket("2026-07-18T12:20:00.000Z", {
+          surfaceId: "private-synthetic-safe-id",
+          intentIds: ["synthetic-derived-intent"],
+        })
+      )
+    ).resolves.toMatchObject({ replayed: true });
+    expect(container.blobs.has(indexPath)).toBe(true);
+  });
+
+  it("converges concurrent CAS writers without duplicate or lost entries", async () => {
+    const { store } = createIndexedStore();
+    const ids = [
+      "bug_01j1te5t000000000000001103",
+      "bug_01j1te5t000000000000001104",
+      "bug_01j1te5t000000000000001105",
+    ];
+    await Promise.all(
+      ids.map((packetId, index) =>
+        store.writePacket(
+          "bug",
+          packetId,
+          indexedPacket(`2026-07-18T12:0${index}:00.000Z`)
+        )
+      )
+    );
+
+    const window = await store.readPacketTimeWindow("bug", {
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+      maxItems: 10,
+      maxBytes: 64 * 1024,
+    });
+    expect(window.packets.map((entry) => entry.packetId)).toEqual(ids);
+    expect(new Set(window.packets.map((entry) => entry.packetId)).size).toBe(3);
+  });
+
+  it("keeps snapshots stable until a late accepted packet changes membership", async () => {
+    let clock = new Date("2026-07-18T13:05:00.000Z");
+    const { store } = createIndexedStore(
+      new MemoryJsonBlobContainer(),
+      () => new Date(clock.getTime())
+    );
+    const options = {
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+      maxItems: 10,
+      maxBytes: 64 * 1024,
+    } as const;
+    const empty = await store.readPacketTimeWindow("bug", options);
+    expect(empty).toMatchObject({
+      complete: true,
+      observedAt: options.windowStart,
+      packets: [],
+    });
+
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000001106",
+      indexedPacket("2026-07-18T12:01:00.000Z")
+    );
+    const first = await store.readPacketTimeWindow("bug", options);
+    const unchanged = await store.readPacketTimeWindow("bug", options);
+    expect(unchanged.snapshot).toBe(first.snapshot);
+    expect(unchanged.observedAt).toBe(first.observedAt);
+
+    clock = new Date("2026-07-18T13:04:00.000Z");
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000001107",
+      indexedPacket("2026-07-18T12:02:00.000Z")
+    );
+    const late = await store.readPacketTimeWindow("bug", options);
+    expect(late.snapshot).not.toBe(first.snapshot);
+    expect(late.observedAt > first.observedAt).toBe(true);
+  });
+
+  it("lists only bounded exact window properties and never scans a Blob prefix", async () => {
+    const { container, store } = createIndexedStore();
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000001108",
+      indexedPacket("2026-07-18T12:59:00.000Z")
+    );
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000001109",
+      indexedPacket("2026-07-18T14:01:00.000Z")
+    );
+    container.operations.length = 0;
+
+    await expect(
+      store.listPacketTimeWindows("bug", {
+        windowStart: "2026-07-18T12:00:00.000Z",
+        windowEnd: "2026-07-18T15:00:00.000Z",
+        partition: "hour",
+        maxItems: 3,
+        maxBytes: 64 * 1024,
+      })
+    ).resolves.toMatchObject({
+      kind: "bug",
+      complete: true,
+      windows: [
+        {
+          windowStart: "2026-07-18T12:00:00.000Z",
+          windowEnd: "2026-07-18T13:00:00.000Z",
+        },
+        {
+          windowStart: "2026-07-18T14:00:00.000Z",
+          windowEnd: "2026-07-18T15:00:00.000Z",
+        },
+      ],
+    });
+    expect(container.operations.some((operation) => operation.type === "list")).toBe(false);
+    expect(
+      container.operations.filter((operation) => operation.type === "properties")
+    ).toHaveLength(3);
+  });
+
+  it("supports exact UTC day partitions with the same bounded contract", async () => {
+    const { container, store } = createIndexedStore(
+      new MemoryJsonBlobContainer(),
+      () => new Date("2026-07-19T00:05:00.000Z"),
+      "day"
+    );
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000001113",
+      indexedPacket("2026-07-18T23:59:59.999Z")
+    );
+    expect(
+      container.blobs.has("feedback-index/bugs/windows/2026/07/18.json")
+    ).toBe(true);
+    await expect(
+      store.readPacketTimeWindow("bug", {
+        windowStart: "2026-07-18T00:00:00.000Z",
+        windowEnd: "2026-07-19T00:00:00.000Z",
+        maxItems: 10,
+        maxBytes: 64 * 1024,
+      })
+    ).resolves.toMatchObject({
+      complete: true,
+      packets: [{ acceptedAt: "2026-07-18T23:59:59.999Z" }],
+    });
+  });
+
+  it("bounds CAS contention and exact-property deadlines without partial success", async () => {
+    const contended = createIndexedStore();
+    let indexAttempts = 0;
+    contended.container.onUpload = (path) => {
+      if (path.includes("feedback-index/bugs/windows/")) {
+        indexAttempts += 1;
+        throw storageFailure(412, "ConditionNotMet");
+      }
+    };
+    await expect(
+      contended.store.writePacket(
+        "bug",
+        "bug_01j1te5t000000000000001114",
+        indexedPacket("2026-07-18T12:40:00.000Z")
+      )
+    ).rejects.toMatchObject({
+      code: "STORAGE_OPERATION_FAILED",
+      diagnostic: { operation: "write-packet", retryable: true },
+    });
+    expect(indexAttempts).toBe(8);
+
+    const deadline = createIndexedStore();
+    deadline.container.onProperties = async () => {
+      await new Promise<void>(() => undefined);
+    };
+    await expect(
+      deadline.store.listPacketTimeWindows("bug", {
+        windowStart: "2026-07-18T12:00:00.000Z",
+        windowEnd: "2026-07-18T13:00:00.000Z",
+        partition: "hour",
+        maxItems: 1,
+        maxBytes: 64 * 1024,
+        timeoutMs: 5,
+      })
+    ).rejects.toMatchObject({
+      code: "DEADLINE_EXCEEDED",
+      diagnostic: { operation: "list-time-windows" },
+    });
+  });
+
+  it("fails closed on corrupt heads, packet mismatches, and a missing exact-properties driver", async () => {
+    const { container, store } = createIndexedStore();
+    const packetId = "bug_01j1te5t000000000000001112";
+    const indexPath = "feedback-index/bugs/windows/2026/07/18/12.json";
+    const options = {
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+      maxItems: 10,
+      maxBytes: 64 * 1024,
+    } as const;
+    await store.writePacket(
+      "bug",
+      packetId,
+      indexedPacket("2026-07-18T12:30:00.000Z")
+    );
+    const index = container.blobs.get(indexPath);
+    if (!index) throw new Error("missing test index");
+    index.metadata.plasiussnapshot = "0".repeat(64);
+    await expect(store.readPacketTimeWindow("bug", options)).rejects.toMatchObject({
+      code: "CORRUPT_RECORD",
+      diagnostic: { operation: "read-time-window" },
+    });
+    index.metadata.plasiussnapshot = JSON.parse(
+      new TextDecoder().decode(index.bytes)
+    ).snapshot as string;
+
+    const packetBlob = container.blobs.get(
+      `feedback/bugs/packets/${packetId}.json`
+    );
+    if (!packetBlob) throw new Error("missing test packet");
+    packetBlob.metadata.plasiussha256 = "f".repeat(64);
+    await expect(store.readPacketTimeWindow("bug", options)).rejects.toMatchObject({
+      code: "CORRUPT_RECORD",
+    });
+
+    const noPropertiesContainer: JsonPacketBlobContainerPort = {
+      getBlockBlobClient: (path) => {
+        const delegated = container.getBlockBlobClient(path);
+        return {
+          uploadData: delegated.uploadData.bind(delegated),
+          download: delegated.download.bind(delegated),
+          getBlobLeaseClient: delegated.getBlobLeaseClient.bind(delegated),
+        };
+      },
+    };
+    const noPropertiesStore = createImmutableJsonPacketStore({
+      container: noPropertiesContainer,
+      kinds: {
+        bug: {
+          ...kindConfig,
+          packetSchema: indexedPacketSchema,
+          timeIndex: {
+            prefix: "feedback-index/bugs",
+            timestampField: "acceptedAt",
+            partition: "hour",
+          },
+        },
+      },
+    });
+    await expect(
+      noPropertiesStore.listPacketTimeWindows("bug", {
+        ...options,
+        partition: "hour",
+      })
+    ).rejects.toMatchObject({ code: "INVALID_CONFIG" });
+  });
+
+  it("rejects misaligned, wrong-partition, over-bounds, and conflicting indexed values", async () => {
+    const { store } = createIndexedStore();
+    const packetId = "bug_01j1te5t000000000000001110";
+    await store.writePacket(
+      "bug",
+      packetId,
+      indexedPacket("2026-07-18T12:01:00.000Z")
+    );
+
+    await expect(
+      store.readPacketTimeWindow("bug", {
+        windowStart: "2026-07-18T12:01:00.000Z",
+        windowEnd: "2026-07-18T13:00:00.000Z",
+        maxItems: 10,
+        maxBytes: 64 * 1024,
+      })
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      store.readPacketTimeWindow("bug", {
+        windowStart: "2026-07-18T12:00:00.000Z",
+        windowEnd: "2026-07-18T13:00:00.000Z",
+        maxItems: 1,
+        maxBytes: 1,
+      })
+    ).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    await expect(
+      store.readPacketTimeWindow("bug", {
+        windowStart: "2026-07-18T12:00:00.000Z",
+        windowEnd: "2026-07-18T13:00:00.000Z",
+        maxItems: 0,
+        maxBytes: 64 * 1024,
+      })
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      store.listPacketTimeWindows("bug", {
+        windowStart: "2026-07-18T12:00:00.000Z",
+        windowEnd: "2026-07-18T13:00:00.000Z",
+        partition: "day",
+        maxItems: 1,
+        maxBytes: 64 * 1024,
+      })
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      store.writePacket(
+        "bug",
+        packetId,
+        indexedPacket("2026-07-18T12:02:00.000Z")
+      )
+    ).rejects.toMatchObject({ code: "IMMUTABLE_CONFLICT" });
+
+    await expect(
+      store.writePacket(
+        "bug",
+        "bug_01j1te5t000000000000001115",
+        indexedPacket("+010000-01-01T00:00:00.000Z")
+      )
+    ).rejects.toMatchObject({ code: "SCHEMA_REJECTED" });
+
+    const invalidClock = createIndexedStore(
+      new MemoryJsonBlobContainer(),
+      () => new Date("+010000-01-01T00:00:00.000Z")
+    );
+    await expect(
+      invalidClock.store.writePacket(
+        "bug",
+        "bug_01j1te5t000000000000001116",
+        indexedPacket("2026-07-18T12:03:00.000Z")
+      )
+    ).rejects.toMatchObject({ code: "INVALID_CONFIG" });
+    expect(invalidClock.container.operations).toHaveLength(0);
   });
 });

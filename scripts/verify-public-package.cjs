@@ -64,6 +64,7 @@ const EXPECTED_PUBLIC_PACKAGE_PATHS = Object.freeze([
   "docs/adrs/adr-0004-immutable-schema-backed-json-packet-storage.md",
   "docs/adrs/adr-0005-exact-main-oidc-package-publishing.md",
   "docs/adrs/adr-0006-path-only-private-artifact-prevention-gates.md",
+  "docs/adrs/adr-0007-cas-time-window-packet-indexes.md",
   "docs/adrs/index.md",
   "docs/tdrs/tdr-0001-immutable-asset-storage-protocol.md",
   "docs/tdrs/tdr-0002-immutable-json-packet-storage-protocol.md",

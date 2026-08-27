@@ -6,3 +6,4 @@
 - [ADR-0004: Immutable Schema-Backed JSON Packet Storage](./adr-0004-immutable-schema-backed-json-packet-storage.md)
 - [ADR-0005: Exact-main OIDC package publishing](./adr-0005-exact-main-oidc-package-publishing.md)
 - [ADR-0006: Path-Only Private-Artifact Prevention Gates](./adr-0006-path-only-private-artifact-prevention-gates.md)
+- [ADR-0007: CAS Time-Window Packet Indexes](./adr-0007-cas-time-window-packet-indexes.md)
