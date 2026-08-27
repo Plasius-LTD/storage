@@ -15,6 +15,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.2.1] - 2026-08-27
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
   - Consume the complete package tar listing when checking for built output so
     `pipefail` cannot mistake a successful early match for a failed archive.
   - Pass the verified publication tarball to npm as an explicit local path so
@@ -350,7 +364,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.2.1...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -383,3 +397,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.0.19]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.19
 [1.1.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.1.0
 [1.2.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.2.0
+[1.2.1]: https://github.com/Plasius-LTD/storage/releases/tag/v1.2.1
