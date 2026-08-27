@@ -9,6 +9,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 - **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.3.0] - 2026-08-27
+
+- **Added**
   - Add opt-in, fixed-prefix accepted-time packet indexes with packet-first
     replay repair, bounded CAS window heads, exact complete window reads, and
     exact-path window snapshot discovery for hourly/daily processors (task #51).
@@ -374,7 +388,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.0...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -408,3 +422,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.1.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.1.0
 [1.2.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.2.0
 [1.2.1]: https://github.com/Plasius-LTD/storage/releases/tag/v1.2.1
+[1.3.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.0
