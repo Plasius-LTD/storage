@@ -3,12 +3,14 @@ const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { buildSync } = require("esbuild");
 const {
   collectRepositoryArtifactPaths,
   compareExactPathAllowlist,
+  createSafeArtifactPolicyError,
   findPackageFilesPolicyViolations,
   findPrivateArtifactViolations,
+  formatSafeArtifactPolicyError,
+  summarizePrivateArtifactViolations,
 } = require("./private-artifact-policy.cjs");
 
 const EXPECTED_PACKAGE_FILES_ENTRIES = Object.freeze([
@@ -95,11 +97,9 @@ async function main() {
 
     const privateArtifactViolations = findPrivateArtifactViolations(paths);
     if (privateArtifactViolations.length > 0) {
-      throw new Error(
-        formatPrivateArtifactViolations(
-          "Public package contains prohibited private artifact paths",
-          privateArtifactViolations
-        )
+      throw createSafeArtifactPolicyError(
+        "private-package-artifact-rejected",
+        summarizePrivateArtifactViolations(privateArtifactViolations)
       );
     }
 
@@ -139,7 +139,9 @@ async function main() {
     ];
     const missingPaths = requiredPaths.filter((requiredPath) => !paths.includes(requiredPath));
     if (missingPaths.length > 0) {
-      throw new Error(`Public package is missing required paths: ${missingPaths.join(", ")}`);
+      throw new Error(
+        `Public package is missing ${missingPaths.length} required path(s); values were not logged.`
+      );
     }
 
     const forbiddenTarballPathPatterns = [
@@ -153,7 +155,9 @@ async function main() {
       forbiddenTarballPathPatterns.some((pattern) => pattern.test(filePath))
     );
     if (forbiddenPaths.length > 0) {
-      throw new Error(`Public package contains forbidden paths: ${forbiddenPaths.join(", ")}`);
+      throw new Error(
+        `Public package contains ${forbiddenPaths.length} forbidden path(s); values were not logged.`
+      );
     }
 
     verifyNoForbiddenCodeReferences();
@@ -196,11 +200,9 @@ function verifyRepositoryPrivateArtifactPolicy() {
     collectRepositoryArtifactPaths(process.cwd())
   );
   if (violations.length > 0) {
-    throw new Error(
-      formatPrivateArtifactViolations(
-        "Public package check stopped before npm pack because prohibited repository paths were found",
-        violations
-      )
+    throw createSafeArtifactPolicyError(
+      "private-repository-artifact-rejected",
+      summarizePrivateArtifactViolations(violations)
     );
   }
 }
@@ -210,10 +212,11 @@ function verifyPackageFilesAllowlist() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const policyViolations = findPackageFilesPolicyViolations(manifest.files);
   if (policyViolations.length > 0) {
+    const ruleIds = [
+      ...new Set(policyViolations.map(({ ruleId }) => ruleId)),
+    ].sort();
     throw new Error(
-      `package.json files policy failed:\n${policyViolations
-        .map((violation) => `- ${violation.entry} (${violation.ruleId})`)
-        .join("\n")}`
+      `package.json files policy failed (${ruleIds.join(", ")}); entry values were not logged.`
     );
   }
 
@@ -231,21 +234,8 @@ function verifyPackageFilesAllowlist() {
   }
 }
 
-function formatPrivateArtifactViolations(label, violations) {
-  return `${label}; file contents were not inspected:\n${violations
-    .map((violation) => `- ${violation.artifactPath} (${violation.ruleId})`)
-    .join("\n")}`;
-}
-
 function formatAllowlistDifference(label, comparison) {
-  const details = [];
-  if (comparison.missingPaths.length > 0) {
-    details.push(`missing: ${comparison.missingPaths.join(", ")}`);
-  }
-  if (comparison.unexpectedPaths.length > 0) {
-    details.push(`unexpected: ${comparison.unexpectedPaths.join(", ")}`);
-  }
-  return `${label}: ${details.join("; ")}`;
+  return `${label} (${comparison.missingPaths.length} missing, ${comparison.unexpectedPaths.length} unexpected); path values were not logged.`;
 }
 
 function verifyInstalledExportMap(consumerDirectory) {
@@ -351,6 +341,7 @@ function verifyInstalledTypeScriptBoundary(consumerDirectory) {
 }
 
 function verifyBrowserBoundary(consumerDirectory) {
+  const { buildSync } = require("esbuild");
   for (const [label, entrypoint] of [
     ["immutable-assets", "@plasius/storage/immutable-assets"],
     ["immutable-json-packets", "@plasius/storage/immutable-json-packets"],
@@ -472,7 +463,12 @@ function parseNpmPackJson(rawOutput) {
   return JSON.parse(rawOutput.slice(start, end + 1));
 }
 
-main().catch((cause) => {
-  console.error(cause instanceof Error ? cause.message : cause);
+main().catch((error) => {
+  console.error(
+    `Public package check failed (${formatSafeArtifactPolicyError(
+      error,
+      "public-package-check-failed"
+    )}).`
+  );
   process.exit(1);
 });

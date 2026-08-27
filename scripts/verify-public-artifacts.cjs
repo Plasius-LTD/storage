@@ -6,7 +6,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   collectRepositoryArtifactPaths,
+  createSafeArtifactPolicyError,
   findPrivateArtifactViolations,
+  formatSafeArtifactPolicyError,
+  summarizePrivateArtifactViolations,
 } = require("./private-artifact-policy.cjs");
 
 const PROHIBITED = "legal/cla-registry.csv";
@@ -30,11 +33,7 @@ function run(command, args, options = {}) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error || result.status !== 0) {
-    const detail = result.stderr.trim().split("\n")[0];
-    throw new Error(
-      `${command} failed${detail ? `: ${detail}` : "."}`,
-      { cause: result.error }
-    );
+    throw createSafeArtifactPolicyError("subprocess-failed");
   }
   return result.stdout;
 }
@@ -141,13 +140,14 @@ function validatePackage(root, packageDirectory) {
   if (!Array.isArray(files)) {
     throw new Error("npm pack result did not include a file inventory.");
   }
-  const matches = files
+  const artifactPaths = files
     .map((entry) => entry?.path)
-    .filter((entry) => typeof entry === "string")
-    .filter((entry) => normalizeArtifactPath(entry) === PROHIBITED);
-  if (matches.length > 0) {
-    throw new Error(
-      `npm package inventory contains prohibited path metadata: ${matches.join(", ")}`
+    .filter((entry) => typeof entry === "string");
+  const violations = findPrivateArtifactViolations(artifactPaths);
+  if (violations.length > 0) {
+    throw createSafeArtifactPolicyError(
+      "private-artifact-policy-rejected",
+      summarizePrivateArtifactViolations(violations)
     );
   }
 }
@@ -162,8 +162,9 @@ function main() {
   // prohibited path is present, so this process never asks npm to read it.
   const sourceMatches = collectSourceMatches(root);
   if (sourceMatches.length > 0) {
-    throw new Error(
-      `Source contains prohibited path metadata: ${sourceMatches.join(", ")}`
+    throw createSafeArtifactPolicyError(
+      "legacy-private-artifact-rejected",
+      `legacy-private-artifact: ${sourceMatches.length}`
     );
   }
 
@@ -184,10 +185,9 @@ function enforcePrivateArtifactPolicy(root) {
     collectRepositoryArtifactPaths(root)
   );
   if (violations.length > 0) {
-    throw new Error(
-      `Private artifact policy failed; file contents were not inspected:\n${violations
-        .map((violation) => `- ${violation.artifactPath} (${violation.ruleId})`)
-        .join("\n")}`
+    throw createSafeArtifactPolicyError(
+      "private-artifact-policy-rejected",
+      summarizePrivateArtifactViolations(violations)
     );
   }
 }
@@ -195,6 +195,11 @@ function enforcePrivateArtifactPolicy(root) {
 try {
   main();
 } catch (error) {
-  console.error(`Public artifact integrity failed: ${error.message}`);
+  console.error(
+    `Public artifact integrity failed (${formatSafeArtifactPolicyError(
+      error,
+      "public-artifact-check-failed"
+    )}).`
+  );
   process.exitCode = 1;
 }

@@ -318,18 +318,45 @@ npm run pack:check
 Signed contributor agreements and contributor acceptance records are retained
 in an approved access-controlled system outside source control. A
 zero-dependency policy gate inspects repository and Git-index path metadata
-only; it never opens or hashes a suspected private artifact.
+only; it never opens or hashes a suspected private artifact, and rejection
+messages expose rule counts rather than suspected path values.
 
 `privacy:check` rejects protected paths in the working tree and proposed Git
-index. `pack:check` applies the same rules to the final npm path manifest,
-requires the explicit `package.json.files` allowlist, and rejects any package
-path not present in the exact public-package allowlist. Public CLA templates
-remain distributable, but broad legal-directory entries are forbidden.
+index. This includes contributor acceptance, signature, submission, and signed
+agreement record aliases across hierarchical, Windows, and Unicode
+compatibility path forms. One closed semantic vocabulary recognizes all
+contributor, CLA, privacy, registry, record-category, wrapper, and numeric terms
+across separators, case styles, and separator-free forms. Numeric wrappers are
+decimal runs optionally prefixed by `V`, `version`, `revision`, or `generation`;
+literal word prefixes must be followed immediately by digits. Protected
+families are classified independently of term order, so intervening wrappers,
+reversed aliases, and a third protected marker cannot turn a private path into
+an opaque token. Arbitrary substring matches remain outside the closed
+vocabulary. Explicit process, template, policy, schema, and validator
+documents, including compact or separated numeric wrappers such as `V2` and
+`version2`, remain public only when they are terminal files, not record
+directories.
+Windows-ignored trailing dots and spaces are removed from each path component
+only for classification, so a path such as `report.csv. ` is rejected while its
+raw package identity remains distinct for exact allowlist and collision checks.
+Policy rejections expose only rule counts; exceptional traversal or verifier
+failures expose only allowlisted codes, never candidate paths, raw exception
+messages, or stacks. `pack:check` applies the same rules to the final npm path
+manifest, requires the explicit `package.json.files` allowlist, and rejects any
+package path not present in the exact public-package allowlist. Raw package
+identities and cardinality are retained so Unicode-normalized aliases or
+duplicate members cannot disappear into the allowlist comparison. Public CLA
+templates remain distributable, but broad legal-directory entries are
+forbidden.
 
-CI runs the path and package gates, and release preparation and publishing fail
-closed when either policy fails. These targeted controls are defense in depth;
-they do not replace organisation-wide secret scanning, access control, or
-incident response.
+Every requested npm package inventory is evaluated by the same private-path
+classifier, including packages rooted below otherwise excluded tool/cache
+directories. CI runs the path and package gates, and release preparation and
+publishing fail closed when either policy fails. Node's built-in coverage is
+exported to LCOV and combined with package coverage so each executable policy
+boundary remains visible to review. These targeted controls are defense in
+depth; they do not replace organisation-wide secret scanning, access control,
+or incident response.
 
 ## Governance
 
