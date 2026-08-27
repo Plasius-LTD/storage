@@ -32,17 +32,19 @@ enforcement boundaries:
    contributor agreement aliases, and paths that combine a privacy marker with
    a registry marker. A single closed semantic vocabulary covers every
    contributor, CLA, privacy, registry, record-category, agreement, wrapper,
-   and numeric/version term. It segments hierarchical, separator-free, and
-   mixed-boundary forms after case folding, then classifies protected marker
-   families independently of order. Reversed terms, an intervening archive,
-   backup, record, storage, or version wrapper, and a third protected marker
-   therefore cannot make an alias opaque; arbitrary substring prefixes still
-   do not qualify. Unicode NFKC normalization runs before structural path
-   handling so compatibility separators, Windows and POSIX separators, and the
-   optional npm `package/` prefix reduce to one representation. Explicit
-   process, template, policy, schema, and validator files with explicit compact
-   or separated numeric/version suffixes remain public, but a matching
-   component used as a directory fails closed. A separate
+   and numeric term. Numeric wrappers are decimal runs optionally prefixed by
+   `v`, `version`, `revision`, or `generation`; literal word prefixes must be
+   followed immediately by digits. The policy segments hierarchical,
+   separator-free, and mixed-boundary forms after case folding, then classifies
+   protected marker families independently of order. Reversed terms, an
+   intervening archive, backup, record, storage, or numeric wrapper, and a
+   third protected marker therefore cannot make an alias opaque; arbitrary
+   substring prefixes still do not qualify. Unicode NFKC normalization runs
+   before structural path handling so compatibility separators, Windows and
+   POSIX separators, and the optional npm `package/` prefix reduce to one
+   representation. Explicit process, template, policy, schema, and validator
+   files with compact or separated numeric wrappers remain public, but a
+   matching component used as a directory fails closed. A separate
    classification copy removes Windows-ignored trailing dots and spaces from
    every component and structurally normalizes the result; raw package-member
    identity remains unchanged for exact allowlist and collision enforcement.

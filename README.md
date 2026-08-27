@@ -325,14 +325,17 @@ messages expose rule counts rather than suspected path values.
 index. This includes contributor acceptance, signature, submission, and signed
 agreement record aliases across hierarchical, Windows, and Unicode
 compatibility path forms. One closed semantic vocabulary recognizes all
-contributor, CLA, privacy, registry, record-category, wrapper, and version terms
-across separators, case styles, and separator-free forms. Protected families
-are classified independently of term order, so intervening wrappers, reversed
-aliases, and a third protected marker cannot turn a private path into an opaque
-token. Arbitrary substring matches remain outside the closed vocabulary.
-Explicit process, template, policy, schema, and validator documents, including
-compact or separated numeric/version suffixes such as `V2`, remain public only
-when they are terminal files, not record directories.
+contributor, CLA, privacy, registry, record-category, wrapper, and numeric terms
+across separators, case styles, and separator-free forms. Numeric wrappers are
+decimal runs optionally prefixed by `V`, `version`, `revision`, or `generation`;
+literal word prefixes must be followed immediately by digits. Protected
+families are classified independently of term order, so intervening wrappers,
+reversed aliases, and a third protected marker cannot turn a private path into
+an opaque token. Arbitrary substring matches remain outside the closed
+vocabulary. Explicit process, template, policy, schema, and validator
+documents, including compact or separated numeric wrappers such as `V2` and
+`version2`, remain public only when they are terminal files, not record
+directories.
 Windows-ignored trailing dots and spaces are removed from each path component
 only for classification, so a path such as `report.csv. ` is rejected while its
 raw package identity remains distinct for exact allowlist and collision checks.

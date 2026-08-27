@@ -39,6 +39,13 @@ const RECORD_CATEGORY_MARKERS = new Set([
 ]);
 const AGREEMENT_MARKERS = new Set(["agreement", "agreements"]);
 
+const NUMERIC_WRAPPER_PREFIXES = Object.freeze([
+  "generation",
+  "revision",
+  "version",
+  "v",
+]);
+
 // These words may wrap a protected separator-free record/registry alias. Keep
 // this vocabulary closed so ordinary words containing a protected substring
 // (for example, "unsignedcla" or "personalizationregistry") remain public.
@@ -411,7 +418,7 @@ function analyzeSemanticSegment(segment) {
     return {
       ...summarizeSemanticStates(
         states,
-        /^[v]?[0-9]+$/u.test(loweredSegment)
+        isNumericWrapper(loweredSegment)
       ),
       unknownAfterProtected: false,
     };
@@ -448,7 +455,7 @@ function analyzeSemanticSegment(segment) {
     }
     const wordAnalysis = summarizeSemanticStates(
       wordStates,
-      /^[v]?[0-9]+$/u.test(loweredWord)
+      isNumericWrapper(loweredWord)
     );
     recognized = true;
     mask |= wordAnalysis.mask;
@@ -943,7 +950,9 @@ function normalizePackageFilesEntry(entry) {
 }
 
 /**
- * Consume a complete decimal run, optionally prefixed by a version "v".
+ * Consume a complete decimal run, optionally prefixed by a closed numeric
+ * wrapper vocabulary. Wrapper state is preserved so a numeric suffix cannot
+ * hide protected terms or revoke a preceding public-document qualifier.
  *
  * @param {string} value
  * @param {number} start
@@ -951,8 +960,15 @@ function normalizePackageFilesEntry(entry) {
  */
 function consumeNumericWrapper(value, start) {
   let index = start;
-  if (value[index] === "v" && /[0-9]/u.test(value[index + 1] ?? "")) {
-    index += 1;
+  for (const prefix of NUMERIC_WRAPPER_PREFIXES) {
+    const prefixEnd = start + prefix.length;
+    if (
+      value.startsWith(prefix, start) &&
+      /[0-9]/u.test(value[prefixEnd] ?? "")
+    ) {
+      index = prefixEnd;
+      break;
+    }
   }
   if (!/[0-9]/u.test(value[index] ?? "")) {
     return undefined;
@@ -961,6 +977,10 @@ function consumeNumericWrapper(value, start) {
     index += 1;
   }
   return index;
+}
+
+function isNumericWrapper(value) {
+  return consumeNumericWrapper(value, 0) === value.length;
 }
 
 function compareViolations(left, right) {

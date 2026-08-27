@@ -226,6 +226,51 @@ test("rejects protected families across intervening wrappers and mixed boundarie
   }
 });
 
+test("rejects compact literal numeric word wrappers across NFKC and term order", () => {
+  const wrappers = [
+    "version2",
+    "revision3",
+    "generation4",
+    "VERSION2",
+    "Revision3",
+    "Generation4",
+    "ｖｅｒｓｉｏｎ２",
+    "ｒｅｖｉｓｉｏｎ３",
+    "ｇｅｎｅｒａｔｉｏｎ４",
+  ];
+  const families = [
+    {
+      ruleId: "contributor-record-storage",
+      terms: ["contributor", "acceptances"],
+    },
+    { ruleId: "signed-cla-storage", terms: ["signed", "cla"] },
+    {
+      ruleId: "cla-contributor-registry",
+      terms: ["contributor", "registry"],
+    },
+    { ruleId: "private-registry", terms: ["private", "registry"] },
+  ];
+
+  for (const wrapper of wrappers) {
+    for (const { ruleId, terms } of families) {
+      for (const orderedTerms of permutations(terms)) {
+        for (
+          let insertionIndex = 0;
+          insertionIndex <= orderedTerms.length;
+          insertionIndex += 1
+        ) {
+          const atoms = [...orderedTerms];
+          atoms.splice(insertionIndex, 0, wrapper);
+          const candidate = `legal/${atoms.join("")}.bin`;
+          const violations = findPrivateArtifactViolations([candidate]);
+          assert.equal(violations.length, 1, candidate);
+          assert.equal(violations[0].ruleId, ruleId, candidate);
+        }
+      }
+    }
+  }
+});
+
 test("rejects third protected markers inside separator-free aliases", () => {
   const protectedPaths = new Map([
     [
@@ -664,6 +709,20 @@ test("allows public CLA templates, contributor documentation, and benign technic
   );
 });
 
+test("retains terminal public documents across literal numeric word wrappers", () => {
+  assert.deepEqual(
+    findPrivateArtifactViolations([
+      "docs/contributorAcceptanceVERSION2_POLICY.md",
+      "docs/contributor-acceptance-policy-version2.md",
+      "docs/signedCLAVersion2Template.md",
+      "src/contributorSignatureRevision3Schema.ts",
+      "docs/signedCLAGeneration4Guidance.md",
+      "docs/ｃｏｎｔｒｉｂｕｔｏｒＡｃｃｅｐｔａｎｃｅＶＥＲＳＩＯＮ２＿ＰＯＬＩＣＹ.md",
+    ]),
+    []
+  );
+});
+
 test("does not treat unknown text after protected terms as a public-document qualifier", () => {
   const protectedPaths = new Map([
     [
@@ -703,10 +762,11 @@ test("package inventory uses the shared contributor-record policy", (t) => {
     `${JSON.stringify({
       name: "synthetic-private-package",
       version: "1.0.0",
-      files: ["legal", "reports"],
+      files: ["docs", "legal", "reports"],
     })}\n`,
     "utf8"
   );
+  fs.mkdirSync(path.join(packageRoot, "docs"), { recursive: true });
   fs.closeSync(
     fs.openSync(path.join(packageRoot, "legal", "contributor-signatures.json"), "w")
   );
@@ -731,6 +791,30 @@ test("package inventory uses the shared contributor-record policy", (t) => {
       "w"
     )
   );
+  fs.closeSync(
+    fs.openSync(path.join(packageRoot, "legal", "privateversion2registry.json"), "w")
+  );
+  fs.closeSync(
+    fs.openSync(
+      path.join(packageRoot, "legal", "contributorrevision3acceptances.json"),
+      "w"
+    )
+  );
+  fs.closeSync(
+    fs.openSync(path.join(packageRoot, "legal", "signedgeneration4cla.pdf"), "w")
+  );
+  fs.closeSync(
+    fs.openSync(
+      path.join(packageRoot, "legal", "registryｖｅｒｓｉｏｎ２contributor.json"),
+      "w"
+    )
+  );
+  fs.closeSync(
+    fs.openSync(
+      path.join(packageRoot, "docs", "contributorAcceptanceVERSION2_POLICY.md"),
+      "w"
+    )
+  );
 
   const verifier = path.resolve(
     __dirname,
@@ -751,12 +835,13 @@ test("package inventory uses the shared contributor-record policy", (t) => {
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /csv-artifact: 1/u);
-  assert.match(result.stderr, /cla-contributor-registry: 1/u);
-  assert.match(result.stderr, /contributor-record-storage: 2/u);
-  assert.match(result.stderr, /signed-cla-storage: 2/u);
+  assert.match(result.stderr, /cla-contributor-registry: 2/u);
+  assert.match(result.stderr, /contributor-record-storage: 3/u);
+  assert.match(result.stderr, /private-registry: 1/u);
+  assert.match(result.stderr, /signed-cla-storage: 3/u);
   assert.doesNotMatch(
     result.stderr,
-    /\.cache|legal\/|reports\/|acceptances|contributors|signatures|signedcla|cla-signed|backup|windows-alias|\.json|\.csv/u
+    /\.cache|docs\/|legal\/|reports\/|acceptances|contributors|signatures|signedcla|cla-signed|backup|version|revision|generation|windows-alias|\.json|\.csv/u
   );
 });
 
@@ -789,6 +874,7 @@ test("rejects public-document qualifiers used as private-record directories", ()
     "docs/contributor-acceptance-process-v2.md/SYNTHETIC-RECORD.pdf",
     "docs/signed-contributor-agreement-template.md/SYNTHETIC-RECORD.pdf",
     "docs/contributor-submission-policy.md/SYNTHETIC-RECORD.pdf",
+    "docs/contributorAcceptanceVERSION2_POLICY.md/SYNTHETIC-RECORD.pdf",
     "src/contributor-signature-schema.ts/SYNTHETIC-RECORD.pdf",
     "src/contributor-signature-schema-v2.ts/SYNTHETIC-RECORD.pdf",
     "src/contributor-submission-validator.ts/SYNTHETIC-RECORD.pdf",
@@ -944,19 +1030,35 @@ test("source-only gates reject working-tree and index-only semantic bypass famil
   const root = createTemporaryDirectory(t);
   execFileSync("git", ["init", "--quiet"], { cwd: root });
 
-  const workingTreeAlias = "legal/acceptances-contributors/2026.json";
-  const indexOnlyAlias =
-    "legal/archiveprivate2026claregistrybackup.json";
-  const publicControl = "docs/contributorAcceptanceProcessV2.md";
-  for (const artifactPath of [workingTreeAlias, indexOnlyAlias, publicControl]) {
+  const workingTreeAliases = [
+    "legal/privateversion2registry.json",
+    "legal/contributorｒｅｖｉｓｉｏｎ３acceptances.json",
+  ];
+  const indexOnlyAliases = [
+    "legal/signedgeneration4cla.pdf",
+    "legal/registryｖｅｒｓｉｏｎ２contributor.json",
+  ];
+  const publicControls = [
+    "docs/contributorAcceptanceVERSION2_POLICY.md",
+    "docs/contributor-acceptance-policy-version2.md",
+  ];
+  for (const artifactPath of [
+    ...workingTreeAliases,
+    ...indexOnlyAliases,
+    ...publicControls,
+  ]) {
     const absolutePath = path.join(root, artifactPath);
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
     fs.closeSync(fs.openSync(absolutePath, "w"));
   }
-  execFileSync("git", ["add", "-f", "--", indexOnlyAlias, publicControl], {
-    cwd: root,
-  });
-  fs.rmSync(path.join(root, indexOnlyAlias));
+  execFileSync(
+    "git",
+    ["add", "-f", "--", ...indexOnlyAliases, ...publicControls],
+    { cwd: root }
+  );
+  for (const artifactPath of indexOnlyAliases) {
+    fs.rmSync(path.join(root, artifactPath));
+  }
 
   const verifiers = [
     {
@@ -984,9 +1086,11 @@ test("source-only gates reject working-tree and index-only semantic bypass famil
     assert.equal(result.status, 1);
     assert.match(result.stderr, /cla-contributor-registry: 1/u);
     assert.match(result.stderr, /contributor-record-storage: 1/u);
+    assert.match(result.stderr, /private-registry: 1/u);
+    assert.match(result.stderr, /signed-cla-storage: 1/u);
     assert.doesNotMatch(
       result.stderr,
-      /legal\/|docs\/|acceptances|contributors|backup|2026|\.json|\.md/iu
+      /legal\/|docs\/|acceptances|version[0-9]|revision[0-9]|generation[0-9]|\.json|\.md|\.pdf/iu
     );
   }
 });

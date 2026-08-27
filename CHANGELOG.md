@@ -30,11 +30,12 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     case-insensitive separator-free, Windows, and Unicode compatibility path
     forms while retaining explicit public contributor documentation files.
     Classify one closed vocabulary of protected markers, record categories,
-    wrappers, and versions independently of order so reversed terms,
+    wrappers, and decimal terms optionally prefixed by `v`, `version`,
+    `revision`, or `generation` independently of order so reversed terms,
     intervening wrappers, mixed token boundaries, or a third protected marker
     cannot bypass contributor, CLA, or registry policy families. Compact and
-    separated numeric/version suffixes such as `V2` remain valid on terminal
-    public process, template, policy, schema, and validator documents.
+    separated numeric wrappers such as `V2` and `version2` remain valid on
+    terminal public process, template, policy, schema, and validator documents.
   - Keep raw package-member identity and cardinality alongside normalized paths,
     report rejected private-path categories by count, and collapse exceptional
     traversal or verifier failures to allowlisted codes without logging path
