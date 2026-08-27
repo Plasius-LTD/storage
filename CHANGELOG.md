@@ -21,7 +21,10 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Security**
-  - (placeholder)
+  - Snapshot exact-window Blob properties and integrity metadata only from
+    bounded plain data descriptors. Null, accessor-bearing, proxy-failing, or
+    otherwise malformed provider responses now fail with fixed redacted
+    corruption errors without invoking provider-controlled getters.
 
 ## [1.2.1] - 2026-08-27
 

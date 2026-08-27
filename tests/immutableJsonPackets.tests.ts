@@ -13,6 +13,7 @@ import {
   type JsonPacketBlobListOptions,
   type JsonPacketBlobListPagePort,
   type JsonPacketBlobPageSettings,
+  type JsonPacketBlobPropertiesResponsePort,
   type JsonPacketBlobUploadOptions,
   type PersistableJsonSchemaPort,
 } from "../src/immutable-json-packets.js";
@@ -89,6 +90,7 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
   ) => void | Promise<void>;
   onDownload?: (path: string) => void | Promise<void>;
   onProperties?: (path: string) => void | Promise<void>;
+  propertiesResponseFactory?: () => unknown;
   onList?: (
     options: JsonPacketBlobListOptions,
     settings: JsonPacketBlobPageSettings
@@ -149,6 +151,9 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
         await this.onProperties?.(path);
         if (options?.abortSignal?.aborted) {
           throw storageFailure(499, "AbortError");
+        }
+        if (this.propertiesResponseFactory) {
+          return this.propertiesResponseFactory() as JsonPacketBlobPropertiesResponsePort;
         }
         const blob = this.blobs.get(path);
         if (!blob) throw storageFailure(404, "BlobNotFound");
@@ -1896,6 +1901,106 @@ describe("processor coordination records", () => {
     expect(
       container.operations.filter((operation) => operation.type === "properties")
     ).toHaveLength(3);
+  });
+
+  it("rejects malformed exact-properties responses without invoking or leaking accessors", async () => {
+    const { container, store } = createIndexedStore();
+    await store.writePacket(
+      "bug",
+      "bug_01j1te5t000000000000001117",
+      indexedPacket("2026-07-18T12:20:00.000Z")
+    );
+    const options = {
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+      partition: "hour",
+      maxItems: 1,
+      maxBytes: 64 * 1024,
+    } as const;
+    const index = container.blobs.get(
+      "feedback-index/bugs/windows/2026/07/18/12.json"
+    );
+    if (!index) throw new Error("missing test index");
+
+    const sensitiveDetail = "provider-private-detail?sig=synthetic-secret";
+    const factories: Array<{
+      readonly create: () => unknown;
+      readonly accessorCalls: () => number;
+    }> = [
+      {
+        create: () => null,
+        accessorCalls: () => 0,
+      },
+      (() => {
+        let calls = 0;
+        const response = {
+          contentType: index.contentType,
+          metadata: { ...index.metadata },
+          etag: index.etag,
+        };
+        Object.defineProperty(response, "contentLength", {
+          enumerable: true,
+          get: () => {
+            calls += 1;
+            throw new Error(sensitiveDetail);
+          },
+        });
+        return {
+          create: () => response,
+          accessorCalls: () => calls,
+        };
+      })(),
+      {
+        create: () =>
+          new Proxy(Object.create(null) as Record<string, unknown>, {
+            getOwnPropertyDescriptor: () => {
+              throw new Error(sensitiveDetail);
+            },
+          }),
+        accessorCalls: () => 0,
+      },
+      (() => {
+        let calls = 0;
+        const metadata = { ...index.metadata };
+        Object.defineProperty(metadata, "plasiussha256", {
+          enumerable: true,
+          get: () => {
+            calls += 1;
+            throw new Error(sensitiveDetail);
+          },
+        });
+        return {
+          create: () => ({
+            contentLength: index.bytes.byteLength,
+            contentType: index.contentType,
+            metadata,
+            etag: index.etag,
+          }),
+          accessorCalls: () => calls,
+        };
+      })(),
+    ];
+
+    for (const factory of factories) {
+      container.propertiesResponseFactory = factory.create;
+      const outcome = await store
+        .listPacketTimeWindows("bug", options)
+        .then(
+          () => undefined,
+          (error: unknown) => error
+        );
+      expect(outcome).toBeInstanceOf(ImmutableJsonPacketStorageError);
+      expect(outcome).toMatchObject({
+        code: "CORRUPT_RECORD",
+        diagnostic: {
+          operation: "list-time-windows",
+          recordType: "time-window-index",
+          retryable: false,
+        },
+      });
+      expect(inspect(outcome)).not.toContain(sensitiveDetail);
+      expect(factory.accessorCalls()).toBe(0);
+    }
   });
 
   it("supports exact UTC day partitions with the same bounded contract", async () => {

@@ -92,10 +92,12 @@ restricted to one aligned configured partition and either verify every indexed
 packet or return no result. Window-snapshot discovery derives a bounded set of
 exact paths and reads closed Blob properties; it is not a stateful change feed
 and never lists a prefix or scans retention. Index heads contain only server
-acceptance time, safe packet ID,
-schema identity, digest, and byte length. Hosts must retain an outbox across
-ambiguous cross-Blob failures and must never source the configured acceptance
-field from a client clock.
+acceptance time, safe packet ID, schema identity, digest, and byte length.
+Properties and metadata are snapshotted only from bounded plain data
+descriptors; malformed objects, accessors, and dependency traps fail with a
+fixed redacted error without invoking provider-controlled getters. Hosts must
+retain an outbox across ambiguous cross-Blob failures and must never source the
+configured acceptance field from a client clock.
 
 The following content is outside this API contract and must be discarded or
 kept in its separately authorised control plane before storage:

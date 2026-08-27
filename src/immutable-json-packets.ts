@@ -1807,8 +1807,73 @@ async function withContext<T>(
   }
 }
 
+function snapshotProviderDataRecord(
+  value: unknown,
+  selectedKeys: readonly string[] | undefined,
+  maxProperties: number,
+  operation: ImmutableJsonPacketStorageOperation,
+  kind: string,
+  recordType: ImmutableJsonPacketStorageDiagnostic["recordType"]
+): Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null) {
+    fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+      kind,
+      recordType,
+    });
+  }
+
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (
+      Array.isArray(value) ||
+      (prototype !== Object.prototype && prototype !== null)
+    ) {
+      fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+        kind,
+        recordType,
+      });
+    }
+
+    const keys: readonly (string | symbol)[] =
+      selectedKeys ?? Reflect.ownKeys(value);
+    if (keys.length > maxProperties) {
+      fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+        kind,
+        recordType,
+      });
+    }
+
+    const snapshot = Object.create(null) as Record<string, unknown>;
+    for (const key of keys) {
+      if (typeof key !== "string") {
+        fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+          kind,
+          recordType,
+        });
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) continue;
+      if (!("value" in descriptor)) {
+        fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+          kind,
+          recordType,
+        });
+      }
+      snapshot[key] = descriptor.value;
+    }
+    return Object.freeze(snapshot);
+  } catch (error) {
+    if (error instanceof ImmutableJsonPacketStorageError) throw error;
+    fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+      kind,
+      recordType,
+      cause: error,
+    });
+  }
+}
+
 function normalizeMetadata(
-  metadata: Readonly<Record<string, string>> | undefined,
+  metadata: unknown,
   operation: ImmutableJsonPacketStorageOperation,
   kind: string
 ): Readonly<Record<string, string>> {
@@ -2779,7 +2844,7 @@ async function readTimeWindowPropertiesIfPresent(
       { kind: kind.kind, recordType: "time-window-index" }
     );
   }
-  let properties: JsonPacketBlobPropertiesResponsePort;
+  let properties: unknown;
   try {
     properties = await context.race(
       getProperties({ abortSignal: context.signal })
@@ -2794,11 +2859,20 @@ async function readTimeWindowPropertiesIfPresent(
       "time-window-index"
     );
   }
+  const safeProperties = snapshotProviderDataRecord(
+    properties,
+    ["contentLength", "contentType", "etag", "metadata"],
+    4,
+    "list-time-windows",
+    kind.kind,
+    "time-window-index"
+  );
+  const contentLength = safeProperties.contentLength;
   if (
-    !Number.isSafeInteger(properties.contentLength) ||
-    (properties.contentLength as number) < 1 ||
-    (properties.contentLength as number) > config.maxReadBytes ||
-    properties.contentType !== IMMUTABLE_JSON_PACKET_CONTENT_TYPE
+    !Number.isSafeInteger(contentLength) ||
+    (contentLength as number) < 1 ||
+    (contentLength as number) > config.maxReadBytes ||
+    safeProperties.contentType !== IMMUTABLE_JSON_PACKET_CONTENT_TYPE
   ) {
     fail(
       "CORRUPT_RECORD",
@@ -2808,18 +2882,25 @@ async function readTimeWindowPropertiesIfPresent(
     );
   }
   providerEtag(
-    properties.etag,
+    safeProperties.etag,
     "list-time-windows",
     kind.kind,
     "download",
     "time-window-index"
   );
   const metadata = normalizeMetadata(
-    properties.metadata,
+    snapshotProviderDataRecord(
+      safeProperties.metadata,
+      undefined,
+      32,
+      "list-time-windows",
+      kind.kind,
+      "time-window-index"
+    ),
     "list-time-windows",
     kind.kind
   );
-  const byteLength = properties.contentLength as number;
+  const byteLength = contentLength as number;
   const recordId = timeWindowRecordId(
     bounds.windowStart,
     kind.timeIndex.partition

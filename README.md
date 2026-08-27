@@ -292,7 +292,10 @@ Schema registration fails closed unless its PII audit is empty.
   derives a bounded set of exact head paths and obtains properties only for
   those paths; it never flat-lists retained content. The method is not a
   stateful change feed: hosts compare each stable opaque snapshot with their
-  own checkpoint, and a late packet changes the affected snapshot.
+  own checkpoint, and a late packet changes the affected snapshot. Provider
+  properties and metadata are admitted only as bounded plain data descriptors;
+  accessors and dependency traps are never invoked and fail with fixed redacted
+  corruption errors.
 - Window heads are capped at 10,000 entries (and may be reduced by the store's
   configured manifest-entry ceiling) in addition to encoded-byte and
   operation-deadline bounds.

@@ -65,8 +65,11 @@ a complete empty window with a deterministic empty snapshot.
 `listPacketTimeWindows()` derives the finite set of aligned head paths for a
 bounded caller range and reads properties for only those paths. It never calls
 flat Blob listing. Complete closed metadata supplies window, observation, and
-snapshot facts; malformed or ambiguous properties fail closed. Results are
-ascending, unique, and include only windows with a head.
+snapshot facts. The response and metadata cross the provider boundary through
+bounded plain-data descriptor snapshots, so nulls, accessors, and throwing
+dependency traps fail with fixed redacted corruption errors without invoking
+provider-controlled getters. Malformed or ambiguous properties fail closed.
+Results are ascending, unique, and include only windows with a head.
 
 ## Ownership Boundary
 
