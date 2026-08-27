@@ -183,6 +183,11 @@ const feedbackPackets = createImmutableJsonPacketStore({
       prefix: "feedback/bugs",
       packetSchema: FeedbackBugPacketSchema,
       checkpointSchema: FeedbackProcessorCheckpointSchema,
+      timeIndex: {
+        prefix: "feedback-index/bugs",
+        timestampField: "acceptedAt",
+        partition: "hour",
+      },
       safeDeadLetterCodes: [
         "CLASSIFIER_UNAVAILABLE",
         "PACKET_SCHEMA_REJECTED",
@@ -212,6 +217,23 @@ const packets = await Promise.all(
     feedbackPackets.readPacket("bug", packetId, { signal: requestSignal })
   )
 );
+
+const hour = await feedbackPackets.readPacketTimeWindow("bug", {
+  windowStart: "2026-07-18T12:00:00.000Z",
+  windowEnd: "2026-07-18T13:00:00.000Z",
+  maxItems: 10_000,
+  maxBytes: 4 * 1024 * 1024,
+  signal: requestSignal,
+});
+
+const windowSnapshots = await feedbackPackets.listPacketTimeWindows("bug", {
+  windowStart: "2026-07-11T12:00:00.000Z",
+  windowEnd: "2026-07-18T13:00:00.000Z",
+  partition: "hour",
+  maxItems: 169,
+  maxBytes: 4 * 1024 * 1024,
+  signal: requestSignal,
+});
 ```
 
 The example schema exports are supplied by the consuming application/package;
@@ -259,6 +281,29 @@ Schema registration fails closed unless its PII audit is empty.
   is not a durable snapshot or an ingestion checkpoint. Processors must start a
   fresh traversal when reconciling new or late packets and use immutable output
   manifests/checkpoint CAS—not the list cursor—as their correctness boundary.
+- A kind that configures `timeIndex` gains an append-only accepted-time head
+  for each exact UTC hour or day. `writePacket()` writes the immutable packet
+  first and returns success only after its safe index entry is visible. An
+  exact replay repairs a missing entry; hosts must keep an outbox and retry an
+  ambiguous failure because Blob cannot atomically commit the two records.
+- `readPacketTimeWindow()` reads one aligned head and every referenced packet,
+  verifies both integrity boundaries, and returns one complete canonically
+  ordered result or fails without partial output. `listPacketTimeWindows()`
+  derives a bounded set of exact head paths and obtains properties only for
+  those paths; it never flat-lists retained content. The method is not a
+  stateful change feed: hosts compare each stable opaque snapshot with their
+  own checkpoint, and a late packet changes the affected snapshot. Provider
+  properties and metadata are admitted only as bounded plain data descriptors;
+  accessors and dependency traps are never invoked and fail with fixed redacted
+  corruption errors.
+- Window heads are capped at 10,000 entries (and may be reduced by the store's
+  configured manifest-entry ceiling) in addition to encoded-byte and
+  operation-deadline bounds.
+- Index heads contain only server acceptance time, safe packet ID, registered
+  schema identity, digest, and byte length. They contain no packet payload,
+  narrative, reporter correlation, request/browser facts, URL, or provider
+  data. The configured `timestampField` must be server-owned before this API is
+  called.
 
 This is the final structured storage guard, not a free-text PII detector.
 Narrative, screenshots, identity correlation, URLs, locale, and client
@@ -291,10 +336,13 @@ and all PII elimination before this API. The package has no logging, delete,
 generic or caller-prefixed scan, public URL, SAS, credential-construction, or
 lifecycle-policy surface. Existing write/read-only adapters remain compatible;
 `listPacketPage()` fails closed until the injected container also supplies the
-Azure-compatible flat-list structural method.
+Azure-compatible flat-list structural method, and
+`listPacketTimeWindows()` fails closed until exact Blob `getProperties()` is
+available.
 
 For the full decision and protocol, see
 [ADR-0004](./docs/adrs/adr-0004-immutable-schema-backed-json-packet-storage.md),
+[ADR-0007](./docs/adrs/adr-0007-cas-time-window-packet-indexes.md),
 [TDR-0002](./docs/tdrs/tdr-0002-immutable-json-packet-storage-protocol.md), and
 [SECURITY.md](./SECURITY.md).
 

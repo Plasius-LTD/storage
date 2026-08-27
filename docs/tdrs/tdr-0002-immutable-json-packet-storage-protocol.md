@@ -1,7 +1,7 @@
 # TDR-0002: Immutable JSON Packet Storage Protocol
 
 - Date: 2026-07-18
-- Last updated: 2026-08-13
+- Last updated: 2026-08-27
 - Status: Accepted
 - Package entry point: `@plasius/storage/immutable-json-packets`
 - Tracked work: [Storage Task #34](https://github.com/Plasius-LTD/storage/issues/34)
@@ -22,6 +22,8 @@ For a configured packet kind with prefix `{prefix}`, the package owns:
 | Record | Fixed path |
 | --- | --- |
 | Packet | `{prefix}/packets/{packetId}.json` |
+| Hour index head | `{timeIndex.prefix}/windows/{YYYY}/{MM}/{DD}/{HH}.json` |
+| Day index head | `{timeIndex.prefix}/windows/{YYYY}/{MM}/{DD}.json` |
 | Replay manifest | `{prefix}/manifests/{manifestId}.json` |
 | Dead letter | `{prefix}/dead-letters/{deadLetterId}.json` |
 | Checkpoint | `{prefix}/control/checkpoints/{name}.json` |
@@ -116,6 +118,38 @@ the processor's correctness checkpoint. A processor uses it only to finish a
 bounded pass, starts a fresh pass to discover new/late packets, calls
 `readPacket()` for canonical bytes and schema validation, and commits durable
 window state only after immutable output/manifests exist.
+
+## Bounded Accepted-Time Window Protocol
+
+A packet kind may declare a fixed, non-overlapping time-index prefix, one
+canonical UTC timestamp field, and an `hour` or `day` partition. Indexed
+`writePacket()` stores the packet first and then conditionally creates or
+compare-and-swaps its aligned window head. The operation succeeds only when
+both records are visible. Exact replay repairs a missing head entry; an entry
+whose timestamp or packet integrity differs is an immutable conflict. Hosts
+retain their outbox after any ambiguous cross-Blob failure and retry the same
+packet write.
+
+Window heads are append-only canonical records. Entries contain only
+`acceptedAt`, packet ID, registered schema identity/version, SHA-256, and byte
+length, sorted by `(acceptedAt, packetId)`. The package owns a stable opaque
+membership snapshot and a package-generated observation time that advances
+monotonically whenever membership changes. All create/update operations use
+exact Blob conditions and bounded conflict retries. A head holds at most
+10,000 entries, further reduced by the configured manifest-entry ceiling, and
+must also fit the configured encoded-byte limit.
+
+`readPacketTimeWindow()` accepts one exact aligned configured partition. It
+verifies the head and all referenced packets and returns a complete canonical
+set or no result; it never exposes a partial page. A caller-provided item or
+byte limit can only reduce the configured maximum. A missing head is a
+complete empty window with a deterministic empty snapshot.
+
+`listPacketTimeWindows()` derives a bounded list of exact aligned head paths
+and obtains properties only for those paths. It never enumerates a prefix or
+retention history. Closed metadata yields only window start/end, observation
+time, and membership snapshot. Results are unique and ascending; late packet
+insertion changes the affected snapshot so a host can safely reprocess it.
 
 ## Immutable Write Protocol
 
@@ -233,4 +267,5 @@ Release validation covers:
 ## Related Documents
 
 - [ADR-0004: Immutable Schema-Backed JSON Packet Storage](../adrs/adr-0004-immutable-schema-backed-json-packet-storage.md)
+- [ADR-0007: CAS Time-Window Packet Indexes](../adrs/adr-0007-cas-time-window-packet-indexes.md)
 - [Security Policy](../../SECURITY.md)

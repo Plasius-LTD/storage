@@ -84,6 +84,21 @@ payloads still require the full `readPacket()` integrity and schema boundary.
 Opaque list cursors are kind-bound, size-bounded traversal aids, not durable
 snapshots, credentials, or processor checkpoints. Do not log them.
 
+Accepted-time processing uses a separate opt-in fixed index. Packet writes
+complete before an append-only window-head entry is conditionally created or
+compare-and-swapped. Exact replays repair a missing entry, while changed
+timestamps or integrity facts fail as immutable conflicts. Window reads are
+restricted to one aligned configured partition and either verify every indexed
+packet or return no result. Window-snapshot discovery derives a bounded set of
+exact paths and reads closed Blob properties; it is not a stateful change feed
+and never lists a prefix or scans retention. Index heads contain only server
+acceptance time, safe packet ID, schema identity, digest, and byte length.
+Properties and metadata are snapshotted only from bounded plain data
+descriptors; malformed objects, accessors, and dependency traps fail with a
+fixed redacted error without invoking provider-controlled getters. Hosts must
+retain an outbox across ambiguous cross-Blob failures and must never source the
+configured acceptance field from a client clock.
+
 The following content is outside this API contract and must be discarded or
 kept in its separately authorised control plane before storage:
 

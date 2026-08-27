@@ -19,6 +19,8 @@ const MAX_JSON_DEPTH = 16;
 const MAX_JSON_MEMBERS = 10_000;
 const MAX_JSON_STRING_BYTES = 1_024;
 const MAX_STREAM_CHUNKS = 65_536;
+const MAX_TIME_INDEX_CAS_ATTEMPTS = 8;
+const MAX_TIME_WINDOW_INDEX_ENTRIES = 10_000;
 
 type JsonPrimitive = string | number | boolean | null;
 export type SafeJsonValue =
@@ -63,6 +65,13 @@ export interface JsonPacketBlobUploadResponsePort {
 
 export interface JsonPacketBlobDownloadResponsePort {
   readonly readableStreamBody?: AsyncIterable<Uint8Array>;
+  readonly contentLength?: number;
+  readonly contentType?: string;
+  readonly metadata?: Readonly<Record<string, string>>;
+  readonly etag?: string;
+}
+
+export interface JsonPacketBlobPropertiesResponsePort {
   readonly contentLength?: number;
   readonly contentType?: string;
   readonly metadata?: Readonly<Record<string, string>>;
@@ -151,6 +160,9 @@ export interface JsonPacketBlobClientPort {
     count?: number,
     options?: { readonly abortSignal?: AbortSignal }
   ): Promise<JsonPacketBlobDownloadResponsePort>;
+  getProperties?(options?: {
+    readonly abortSignal?: AbortSignal;
+  }): Promise<JsonPacketBlobPropertiesResponsePort>;
   getBlobLeaseClient(proposedLeaseId?: string): JsonPacketBlobLeaseClientPort;
 }
 
@@ -174,6 +186,13 @@ export interface ImmutableJsonPacketKindConfig<T = unknown> {
   readonly checkpointSchema?: PersistableJsonSchemaPort<unknown>;
   readonly safeDeadLetterCodes?: readonly string[];
   readonly maxPacketBytes?: number;
+  readonly timeIndex?: {
+    /** Fixed index root selected at store creation; never accepted per operation. */
+    readonly prefix: string;
+    /** Closed field in the validated packet containing its server acceptance time. */
+    readonly timestampField: string;
+    readonly partition: "hour" | "day";
+  };
 }
 
 export interface CreateImmutableJsonPacketStoreOptions<
@@ -207,6 +226,27 @@ export interface ImmutableJsonPacketListOptions
   readonly maxBytes?: number;
 }
 
+export interface ImmutableJsonPacketTimeWindowOptions
+  extends ImmutableJsonPacketOperationOptions {
+  readonly windowStart: string;
+  readonly windowEnd: string;
+  /** Per-call item ceiling; it may only reduce the configured ceiling. */
+  readonly maxItems: number;
+  /** Per-call packet-byte ceiling; it may only reduce the configured ceiling. */
+  readonly maxBytes: number;
+}
+
+export interface ImmutableJsonPacketTimeWindowListOptions
+  extends ImmutableJsonPacketOperationOptions {
+  readonly windowStart: string;
+  readonly windowEnd: string;
+  readonly partition: "hour" | "day";
+  /** Bounds both exact property reads and returned windows. */
+  readonly maxItems: number;
+  /** Bounds aggregate declared index-head bytes. */
+  readonly maxBytes: number;
+}
+
 export type ImmutableJsonPacketStorageErrorCode =
   | "ABORTED"
   | "CHECKPOINT_CONFLICT"
@@ -226,8 +266,10 @@ export type ImmutableJsonPacketStorageErrorCode =
 export type ImmutableJsonPacketStorageOperation =
   | "acquire-lease"
   | "list-packets"
+  | "list-time-windows"
   | "read-checkpoint"
   | "read-packet"
+  | "read-time-window"
   | "release-lease"
   | "renew-lease"
   | "write-checkpoint"
@@ -241,7 +283,13 @@ export interface ImmutableJsonPacketStorageDiagnostic {
   readonly operation: ImmutableJsonPacketStorageOperation;
   readonly retryable: boolean;
   readonly kind?: string;
-  readonly recordType?: "checkpoint" | "dead-letter" | "lease" | "manifest" | "packet";
+  readonly recordType?:
+    | "checkpoint"
+    | "dead-letter"
+    | "lease"
+    | "manifest"
+    | "packet"
+    | "time-window-index";
 }
 
 export class ImmutableJsonPacketStorageError extends Error {
@@ -300,6 +348,36 @@ export interface ImmutableJsonPacketPage {
   readonly byteLength: number;
   readonly complete: boolean;
   readonly nextCursor?: string;
+}
+
+export interface ImmutableJsonPacketTimeWindowEntry
+  extends ImmutableJsonPacketListEntry {
+  readonly acceptedAt: string;
+  readonly packet: SafeJsonValue;
+}
+
+export interface ImmutableJsonPacketTimeWindow {
+  readonly kind: string;
+  readonly windowStart: string;
+  readonly windowEnd: string;
+  readonly observedAt: string;
+  readonly snapshot: string;
+  readonly byteLength: number;
+  readonly complete: true;
+  readonly packets: readonly ImmutableJsonPacketTimeWindowEntry[];
+}
+
+export interface ImmutableJsonPacketTimeWindowDescriptor {
+  readonly windowStart: string;
+  readonly windowEnd: string;
+  readonly observedAt: string;
+  readonly snapshot: string;
+}
+
+export interface ImmutableJsonPacketTimeWindowList {
+  readonly kind: string;
+  readonly complete: true;
+  readonly windows: readonly ImmutableJsonPacketTimeWindowDescriptor[];
 }
 
 export interface ImmutableJsonManifestPacket {
@@ -370,6 +448,14 @@ export interface ImmutableJsonPacketStore<K extends string = string> {
     kind: K,
     options?: ImmutableJsonPacketListOptions
   ): Promise<ImmutableJsonPacketPage>;
+  readPacketTimeWindow(
+    kind: K,
+    options: ImmutableJsonPacketTimeWindowOptions
+  ): Promise<ImmutableJsonPacketTimeWindow>;
+  listPacketTimeWindows(
+    kind: K,
+    options: ImmutableJsonPacketTimeWindowListOptions
+  ): Promise<ImmutableJsonPacketTimeWindowList>;
   writeManifest(
     kind: K,
     manifestId: string,
@@ -410,6 +496,13 @@ interface ResolvedKind {
   readonly checkpointSchema?: ResolvedSchema;
   readonly safeDeadLetterCodes: ReadonlySet<string>;
   readonly maxPacketBytes: number;
+  readonly timeIndex?: ResolvedTimeIndex;
+}
+
+interface ResolvedTimeIndex {
+  readonly prefix: string;
+  readonly timestampField: string;
+  readonly partition: "hour" | "day";
 }
 
 interface ResolvedSchema {
@@ -462,6 +555,7 @@ const SAFE_JSON_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/u;
 const LEASE_TOKEN_PATTERN = /^[\x20-\x7e]{1,256}$/u;
 const BASE64URL_CURSOR_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const DECIMAL_BYTE_LENGTH_PATTERN = /^(?:0|[1-9][0-9]{0,8})$/u;
+const TIME_INDEX_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/u;
 const PACKET_LIST_METADATA_KEYS = [
   "plasiusbytelength",
   "plasiuskind",
@@ -471,6 +565,16 @@ const PACKET_LIST_METADATA_KEYS = [
   "plasiusschemaid",
   "plasiusschemaversion",
   "plasiussha256",
+] as const;
+const TIME_WINDOW_INDEX_SCHEMA_ID = "plasiusPacketTimeWindowIndex";
+const TIME_WINDOW_INDEX_SCHEMA_VERSION = "1.0.0";
+const TIME_WINDOW_INDEX_METADATA_KEYS = [
+  ...PACKET_LIST_METADATA_KEYS,
+  "plasiusentrycount",
+  "plasiusobservedat",
+  "plasiussnapshot",
+  "plasiuswindowend",
+  "plasiuswindowstart",
 ] as const;
 const FORBIDDEN_PREFIX_SEGMENTS = new Set([
   ".",
@@ -640,6 +744,178 @@ function isCanonicalTimestamp(value: unknown): value is string {
   );
 }
 
+function isTimeIndexTimestamp(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    TIME_INDEX_TIMESTAMP_PATTERN.test(value) &&
+    isCanonicalTimestamp(value)
+  );
+}
+
+interface TimeWindowBounds {
+  readonly windowStart: string;
+  readonly windowEnd: string;
+}
+
+interface TimeWindowIndexEntry {
+  readonly acceptedAt: string;
+  readonly packetId: string;
+  readonly schemaId: string;
+  readonly schemaVersion: string;
+  readonly sha256: string;
+  readonly byteLength: number;
+}
+
+interface StoredTimeWindowIndex extends TimeWindowBounds {
+  readonly recordId: string;
+  readonly observedAt: string;
+  readonly snapshot: string;
+  readonly entries: readonly TimeWindowIndexEntry[];
+}
+
+function partitionMilliseconds(partition: "hour" | "day"): number {
+  return partition === "hour" ? 60 * 60 * 1_000 : 24 * 60 * 60 * 1_000;
+}
+
+function alignedPartitionBounds(
+  timestamp: string,
+  partition: "hour" | "day"
+): TimeWindowBounds {
+  const instant = new Date(timestamp);
+  if (partition === "hour") {
+    instant.setUTCMinutes(0, 0, 0);
+  } else {
+    instant.setUTCHours(0, 0, 0, 0);
+  }
+  const windowStart = instant.toISOString();
+  const windowEnd = new Date(
+    instant.getTime() + partitionMilliseconds(partition)
+  ).toISOString();
+  return Object.freeze({ windowStart, windowEnd });
+}
+
+function timeWindowRecordId(
+  windowStart: string,
+  partition: "hour" | "day"
+): string {
+  const compact = windowStart
+    .slice(0, partition === "hour" ? 13 : 10)
+    .replace(/[-:]/gu, "")
+    .replace("T", "t");
+  return `window_${compact}`;
+}
+
+function timeWindowPath(
+  timeIndex: ResolvedTimeIndex,
+  windowStart: string
+): string {
+  const date = new Date(windowStart);
+  const year = String(date.getUTCFullYear()).padStart(4, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  return timeIndex.partition === "hour"
+    ? `${timeIndex.prefix}/windows/${year}/${month}/${day}/${hour}.json`
+    : `${timeIndex.prefix}/windows/${year}/${month}/${day}.json`;
+}
+
+function assertExactTimeWindow(
+  windowStartInput: unknown,
+  windowEndInput: unknown,
+  partition: "hour" | "day",
+  operation: "read-time-window" | "list-time-windows",
+  kind: string,
+  requireSinglePartition: boolean
+): TimeWindowBounds {
+  const windowStart = normalizeTimestamp(windowStartInput, operation);
+  const windowEnd = normalizeTimestamp(windowEndInput, operation);
+  const alignedStart = alignedPartitionBounds(windowStart, partition);
+  if (
+    !isTimeIndexTimestamp(windowStart) ||
+    !isTimeIndexTimestamp(windowEnd) ||
+    !isTimeIndexTimestamp(alignedStart.windowEnd) ||
+    alignedStart.windowStart !== windowStart ||
+    windowEnd <= windowStart
+  ) {
+    fail("INVALID_ARGUMENT", "The accepted-time window is not aligned.", operation, {
+      kind,
+      recordType: "time-window-index",
+    });
+  }
+  if (requireSinglePartition) {
+    if (alignedStart.windowEnd !== windowEnd) {
+      fail("INVALID_ARGUMENT", "Exactly one aligned partition is required.", operation, {
+        kind,
+        recordType: "time-window-index",
+      });
+    }
+  } else {
+    const alignedEnd = alignedPartitionBounds(windowEnd, partition);
+    if (alignedEnd.windowStart !== windowEnd) {
+      fail("INVALID_ARGUMENT", "The accepted-time window is not aligned.", operation, {
+        kind,
+        recordType: "time-window-index",
+      });
+    }
+  }
+  return Object.freeze({ windowStart, windowEnd });
+}
+
+function compareTimeWindowEntries(
+  left: TimeWindowIndexEntry,
+  right: TimeWindowIndexEntry
+): number {
+  if (left.acceptedAt !== right.acceptedAt) {
+    return left.acceptedAt < right.acceptedAt ? -1 : 1;
+  }
+  return left.packetId < right.packetId
+    ? -1
+    : left.packetId > right.packetId
+      ? 1
+      : 0;
+}
+
+function timeWindowIndexEntryLimit(configured: number): number {
+  return Math.min(configured, MAX_TIME_WINDOW_INDEX_ENTRIES);
+}
+
+function timeWindowIndexMemberLimit(entryLimit: number): number {
+  return Math.max(MAX_JSON_MEMBERS, 32 + entryLimit * 7);
+}
+
+function timeWindowSnapshot(
+  kind: string,
+  bounds: TimeWindowBounds,
+  entries: readonly TimeWindowIndexEntry[],
+  operation: ImmutableJsonPacketStorageOperation
+): string {
+  const membership = snapshotJson(
+    {
+      kind,
+      windowStart: bounds.windowStart,
+      windowEnd: bounds.windowEnd,
+      entries: entries.map((entry) => ({
+        acceptedAt: entry.acceptedAt,
+        packetId: entry.packetId,
+        schemaId: entry.schemaId,
+        schemaVersion: entry.schemaVersion,
+        sha256: entry.sha256,
+        byteLength: entry.byteLength,
+      })),
+    },
+    operation,
+    false,
+    timeWindowIndexMemberLimit(entries.length)
+  );
+  return sha256(encodeCanonical(membership));
+}
+
+function nextObservedAt(candidate: Date, previous?: string): string {
+  const candidateMs = candidate.getTime();
+  const previousMs = previous === undefined ? -1 : new Date(previous).getTime();
+  return new Date(Math.max(candidateMs, previousMs + 1)).toISOString();
+}
+
 function normalizedKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/gu, "");
 }
@@ -704,7 +980,8 @@ function assertSafeObjectKey(
 function snapshotJson(
   input: unknown,
   operation: ImmutableJsonPacketStorageOperation,
-  enforcePrivacy: boolean
+  enforcePrivacy: boolean,
+  maxMembers = MAX_JSON_MEMBERS
 ): SafeJsonValue {
   const seen = new Set<object>();
   let memberCount = 0;
@@ -738,7 +1015,7 @@ function snapshotJson(
         }
         if (
           !Number.isSafeInteger(value.length) ||
-          value.length > MAX_JSON_MEMBERS - memberCount
+          value.length > maxMembers - memberCount
         ) {
           fail("LIMIT_EXCEEDED", "The JSON record has too many members.", operation);
         }
@@ -776,7 +1053,7 @@ function snapshotJson(
         fail("INVALID_ARGUMENT", "JSON objects may not contain symbol keys.", operation);
       }
       memberCount += keys.length;
-      if (memberCount > MAX_JSON_MEMBERS) {
+      if (memberCount > maxMembers) {
         fail("LIMIT_EXCEEDED", "The JSON record has too many members.", operation);
       }
       const output = Object.create(null) as Record<string, SafeJsonValue>;
@@ -978,6 +1255,24 @@ function resolvePacketListLimit(
   return resolved;
 }
 
+function resolveTimeWindowLimit(
+  value: number,
+  maximum: number,
+  label: "maxBytes" | "maxItems",
+  operation: "list-time-windows" | "read-time-window",
+  kind: string
+): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    fail(
+      "INVALID_ARGUMENT",
+      `${label} is outside the configured accepted-time window bounds.`,
+      operation,
+      { kind, recordType: "time-window-index" }
+    );
+  }
+  return value;
+}
+
 function resolveSchema(
   candidate: unknown,
   operation: ImmutableJsonPacketStorageOperation
@@ -1041,6 +1336,33 @@ function normalizePrefix(value: unknown): string {
   return segments.join("/");
 }
 
+function resolveTimeIndex(candidate: unknown): ResolvedTimeIndex | undefined {
+  if (candidate === undefined) return undefined;
+  if (
+    !isRecord(candidate) ||
+    !hasExactKeys(candidate, ["partition", "prefix", "timestampField"])
+  ) {
+    fail("INVALID_CONFIG", "The accepted-time index configuration is invalid.", "write-packet");
+  }
+  const prefix = normalizePrefix(candidate.prefix);
+  const timestampField = candidate.timestampField;
+  if (
+    typeof timestampField !== "string" ||
+    !SAFE_JSON_KEY_PATTERN.test(timestampField) ||
+    timestampField === "constructor" ||
+    timestampField === "prototype" ||
+    FORBIDDEN_PACKET_KEYS.has(normalizedKey(timestampField)) ||
+    (candidate.partition !== "hour" && candidate.partition !== "day")
+  ) {
+    fail("INVALID_CONFIG", "The accepted-time index configuration is invalid.", "write-packet");
+  }
+  return Object.freeze({
+    prefix,
+    timestampField,
+    partition: candidate.partition,
+  });
+}
+
 function validateSchemaValue(
   schema: ResolvedSchema,
   input: unknown,
@@ -1076,7 +1398,8 @@ function prepareRecord(
   schemaId: string,
   schemaVersion: string,
   maxBytes: number,
-  operation: ImmutableJsonPacketStorageOperation
+  operation: ImmutableJsonPacketStorageOperation,
+  extraMetadata: Readonly<Record<string, string>> = {}
 ): EncodedRecord {
   const bytes = encodeCanonical(envelope);
   if (bytes.byteLength > maxBytes) {
@@ -1099,8 +1422,205 @@ function prepareRecord(
       plasiusschemaid: schemaId,
       plasiusschemaversion: schemaVersion,
       plasiussha256: digest,
+      ...extraMetadata,
     }),
   });
+}
+
+function prepareTimeWindowIndex(
+  kind: ResolvedKind,
+  bounds: TimeWindowBounds,
+  observedAt: string,
+  entries: readonly TimeWindowIndexEntry[],
+  operation: ImmutableJsonPacketStorageOperation,
+  maxBytes: number
+): { readonly prepared: EncodedRecord; readonly index: StoredTimeWindowIndex } {
+  const recordId = timeWindowRecordId(
+    bounds.windowStart,
+    kind.timeIndex?.partition ?? "hour"
+  );
+  const snapshot = timeWindowSnapshot(kind.kind, bounds, entries, operation);
+  const envelope = snapshotJson(
+    {
+      storageSchema: IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA,
+      recordType: "time-window-index",
+      kind: kind.kind,
+      recordId,
+      schema: {
+        id: TIME_WINDOW_INDEX_SCHEMA_ID,
+        version: TIME_WINDOW_INDEX_SCHEMA_VERSION,
+      },
+      windowStart: bounds.windowStart,
+      windowEnd: bounds.windowEnd,
+      observedAt,
+      snapshot,
+      entryCount: entries.length,
+      entries,
+    },
+    operation,
+    false,
+    timeWindowIndexMemberLimit(entries.length)
+  );
+  const prepared = prepareRecord(
+    envelope,
+    "time-window-index",
+    kind.kind,
+    recordId,
+    TIME_WINDOW_INDEX_SCHEMA_ID,
+    TIME_WINDOW_INDEX_SCHEMA_VERSION,
+    maxBytes,
+    operation,
+    {
+      plasiusentrycount: String(entries.length),
+      plasiusobservedat: observedAt,
+      plasiussnapshot: snapshot,
+      plasiuswindowend: bounds.windowEnd,
+      plasiuswindowstart: bounds.windowStart,
+    }
+  );
+  return Object.freeze({
+    prepared,
+    index: Object.freeze({
+      recordId,
+      windowStart: bounds.windowStart,
+      windowEnd: bounds.windowEnd,
+      observedAt,
+      snapshot,
+      entries: Object.freeze([...entries]),
+    }),
+  });
+}
+
+function parseTimeWindowIndex(
+  downloaded: DownloadedRecord,
+  kind: ResolvedKind,
+  bounds: TimeWindowBounds,
+  operation: "read-time-window" | "list-time-windows" | "write-packet",
+  maxBytes: number,
+  maxEntries: number
+): StoredTimeWindowIndex {
+  const parsed = parseStoredJson(
+    downloaded,
+    operation,
+    kind.kind,
+    timeWindowIndexMemberLimit(maxEntries)
+  );
+  const partition = kind.timeIndex?.partition;
+  const expectedRecordId =
+    partition === undefined
+      ? ""
+      : timeWindowRecordId(bounds.windowStart, partition);
+  if (
+    !isRecord(parsed) ||
+    !hasExactKeys(parsed, [
+      "entries",
+      "entryCount",
+      "kind",
+      "observedAt",
+      "recordId",
+      "recordType",
+      "schema",
+      "snapshot",
+      "storageSchema",
+      "windowEnd",
+      "windowStart",
+    ]) ||
+    parsed.storageSchema !== IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA ||
+    parsed.recordType !== "time-window-index" ||
+    parsed.kind !== kind.kind ||
+    parsed.recordId !== expectedRecordId ||
+    parsed.windowStart !== bounds.windowStart ||
+    parsed.windowEnd !== bounds.windowEnd ||
+    !isTimeIndexTimestamp(parsed.observedAt) ||
+    typeof parsed.snapshot !== "string" ||
+    !SHA256_PATTERN.test(parsed.snapshot) ||
+    !Number.isSafeInteger(parsed.entryCount) ||
+    !Array.isArray(parsed.entries) ||
+    parsed.entries.length !== parsed.entryCount ||
+    parsed.entries.length > maxEntries ||
+    !isRecord(parsed.schema) ||
+    !hasExactKeys(parsed.schema, ["id", "version"]) ||
+    parsed.schema.id !== TIME_WINDOW_INDEX_SCHEMA_ID ||
+    parsed.schema.version !== TIME_WINDOW_INDEX_SCHEMA_VERSION
+  ) {
+    fail("CORRUPT_RECORD", "The accepted-time index is invalid.", operation, {
+      kind: kind.kind,
+      recordType: "time-window-index",
+    });
+  }
+
+  const seen = new Set<string>();
+  const entries = (parsed.entries as readonly unknown[]).map((value) => {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, [
+        "acceptedAt",
+        "byteLength",
+        "packetId",
+        "schemaId",
+        "schemaVersion",
+        "sha256",
+      ]) ||
+      !isTimeIndexTimestamp(value.acceptedAt) ||
+      value.acceptedAt < bounds.windowStart ||
+      value.acceptedAt >= bounds.windowEnd ||
+      typeof value.packetId !== "string" ||
+      !IDENTIFIER_PATTERN.test(value.packetId) ||
+      seen.has(value.packetId) ||
+      value.schemaId !== kind.packetSchema.id ||
+      value.schemaVersion !== kind.packetSchema.version ||
+      typeof value.sha256 !== "string" ||
+      !SHA256_PATTERN.test(value.sha256) ||
+      !Number.isSafeInteger(value.byteLength) ||
+      (value.byteLength as number) < 1 ||
+      (value.byteLength as number) > kind.maxPacketBytes
+    ) {
+      fail("CORRUPT_RECORD", "The accepted-time index is invalid.", operation, {
+        kind: kind.kind,
+        recordType: "time-window-index",
+      });
+    }
+    seen.add(value.packetId);
+    return Object.freeze({
+      acceptedAt: value.acceptedAt,
+      packetId: value.packetId,
+      schemaId: value.schemaId,
+      schemaVersion: value.schemaVersion,
+      sha256: value.sha256,
+      byteLength: value.byteLength as number,
+    });
+  });
+  for (let index = 1; index < entries.length; index += 1) {
+    if (compareTimeWindowEntries(entries[index - 1] as TimeWindowIndexEntry, entries[index] as TimeWindowIndexEntry) >= 0) {
+      fail("CORRUPT_RECORD", "The accepted-time index is not canonically ordered.", operation, {
+        kind: kind.kind,
+        recordType: "time-window-index",
+      });
+    }
+  }
+  const expectedSnapshot = timeWindowSnapshot(kind.kind, bounds, entries, operation);
+  if (parsed.snapshot !== expectedSnapshot) {
+    fail("CORRUPT_RECORD", "The accepted-time index snapshot is invalid.", operation, {
+      kind: kind.kind,
+      recordType: "time-window-index",
+    });
+  }
+  const expected = prepareTimeWindowIndex(
+    kind,
+    bounds,
+    parsed.observedAt,
+    entries,
+    operation,
+    maxBytes
+  );
+  assertDownloadedRecord(
+    downloaded,
+    expected.prepared,
+    operation,
+    kind.kind,
+    "CORRUPT_RECORD"
+  );
+  return expected.index;
 }
 
 function storageToken(error: unknown): {
@@ -1287,8 +1807,73 @@ async function withContext<T>(
   }
 }
 
+function snapshotProviderDataRecord(
+  value: unknown,
+  selectedKeys: readonly string[] | undefined,
+  maxProperties: number,
+  operation: ImmutableJsonPacketStorageOperation,
+  kind: string,
+  recordType: ImmutableJsonPacketStorageDiagnostic["recordType"]
+): Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null) {
+    fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+      kind,
+      recordType,
+    });
+  }
+
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (
+      Array.isArray(value) ||
+      (prototype !== Object.prototype && prototype !== null)
+    ) {
+      fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+        kind,
+        recordType,
+      });
+    }
+
+    const keys: readonly (string | symbol)[] =
+      selectedKeys ?? Reflect.ownKeys(value);
+    if (keys.length > maxProperties) {
+      fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+        kind,
+        recordType,
+      });
+    }
+
+    const snapshot = Object.create(null) as Record<string, unknown>;
+    for (const key of keys) {
+      if (typeof key !== "string") {
+        fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+          kind,
+          recordType,
+        });
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor) continue;
+      if (!("value" in descriptor)) {
+        fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+          kind,
+          recordType,
+        });
+      }
+      snapshot[key] = descriptor.value;
+    }
+    return Object.freeze(snapshot);
+  } catch (error) {
+    if (error instanceof ImmutableJsonPacketStorageError) throw error;
+    fail("CORRUPT_RECORD", "Blob storage returned invalid response data.", operation, {
+      kind,
+      recordType,
+      cause: error,
+    });
+  }
+}
+
 function normalizeMetadata(
-  metadata: Readonly<Record<string, string>> | undefined,
+  metadata: unknown,
   operation: ImmutableJsonPacketStorageOperation,
   kind: string
 ): Readonly<Record<string, string>> {
@@ -1630,15 +2215,220 @@ async function putImmutable(
   }
 }
 
+async function readTimeWindowIndexIfPresent(
+  config: ResolvedStoreConfig,
+  kind: ResolvedKind,
+  bounds: TimeWindowBounds,
+  operation: "read-time-window" | "write-packet",
+  context: OperationContext
+): Promise<
+  | {
+      readonly downloaded: DownloadedRecord;
+      readonly index: StoredTimeWindowIndex;
+    }
+  | undefined
+> {
+  if (!kind.timeIndex) {
+    fail("INVALID_CONFIG", "No accepted-time index is registered for this kind.", operation, {
+      kind: kind.kind,
+      recordType: "time-window-index",
+    });
+  }
+  let downloaded: DownloadedRecord;
+  try {
+    downloaded = await downloadRecord(
+      config,
+      kind.kind,
+      timeWindowPath(kind.timeIndex, bounds.windowStart),
+      config.maxReadBytes,
+      operation,
+      context
+    );
+  } catch (error) {
+    if (
+      error instanceof ImmutableJsonPacketStorageError &&
+      error.code === "NOT_FOUND"
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+  return Object.freeze({
+    downloaded,
+    index: parseTimeWindowIndex(
+      downloaded,
+      kind,
+      bounds,
+      operation,
+      config.maxReadBytes,
+      timeWindowIndexEntryLimit(config.maxManifestEntries)
+    ),
+  });
+}
+
+async function putTimeWindowIndexConditionally(
+  config: ResolvedStoreConfig,
+  kind: ResolvedKind,
+  bounds: TimeWindowBounds,
+  prepared: EncodedRecord,
+  expectedEtag: string | null,
+  context: OperationContext
+): Promise<boolean> {
+  if (!kind.timeIndex) {
+    fail("INVALID_CONFIG", "No accepted-time index is registered for this kind.", "write-packet", {
+      kind: kind.kind,
+      recordType: "time-window-index",
+    });
+  }
+  try {
+    const response = await context.race(
+      config.container
+        .getBlockBlobClient(timeWindowPath(kind.timeIndex, bounds.windowStart))
+        .uploadData(prepared.bytes, {
+          abortSignal: context.signal,
+          conditions:
+            expectedEtag === null
+              ? { ifNoneMatch: "*" }
+              : { ifMatch: expectedEtag },
+          blobHTTPHeaders: {
+            blobContentType: IMMUTABLE_JSON_PACKET_CONTENT_TYPE,
+          },
+          metadata: prepared.metadata,
+        })
+    );
+    providerEtag(
+      response.etag,
+      "write-packet",
+      kind.kind,
+      "write",
+      "time-window-index"
+    );
+    return true;
+  } catch (error) {
+    if (error instanceof ImmutableJsonPacketStorageError) throw error;
+    if (isBlobConditionalConflict(error)) return false;
+    throw asStorageFailure(
+      error,
+      "write-packet",
+      kind.kind,
+      "time-window-index"
+    );
+  }
+}
+
+async function ensurePacketTimeIndexEntry(
+  config: ResolvedStoreConfig,
+  kind: ResolvedKind,
+  bounds: TimeWindowBounds,
+  acceptedAt: string,
+  packetId: string,
+  packet: EncodedRecord,
+  observationCandidate: Date,
+  context: OperationContext
+): Promise<void> {
+  const desiredEntry = Object.freeze({
+    acceptedAt,
+    packetId,
+    schemaId: packet.schemaId,
+    schemaVersion: packet.schemaVersion,
+    sha256: packet.digest,
+    byteLength: packet.bytes.byteLength,
+  });
+
+  for (let attempt = 0; attempt < MAX_TIME_INDEX_CAS_ATTEMPTS; attempt += 1) {
+    context.throwIfAborted();
+    const existing = await readTimeWindowIndexIfPresent(
+      config,
+      kind,
+      bounds,
+      "write-packet",
+      context
+    );
+    const prior = existing?.index.entries.find(
+      (entry) => entry.packetId === packetId
+    );
+    if (prior) {
+      if (
+        prior.acceptedAt !== desiredEntry.acceptedAt ||
+        prior.schemaId !== desiredEntry.schemaId ||
+        prior.schemaVersion !== desiredEntry.schemaVersion ||
+        prior.sha256 !== desiredEntry.sha256 ||
+        prior.byteLength !== desiredEntry.byteLength
+      ) {
+        fail(
+          "IMMUTABLE_CONFLICT",
+          "A different accepted-time entry already uses this packet identifier.",
+          "write-packet",
+          { kind: kind.kind, recordType: "time-window-index" }
+        );
+      }
+      return;
+    }
+    const entries = [...(existing?.index.entries ?? []), desiredEntry];
+    if (
+      entries.length > timeWindowIndexEntryLimit(config.maxManifestEntries)
+    ) {
+      fail(
+        "LIMIT_EXCEEDED",
+        "The accepted-time window exceeds its configured item limit.",
+        "write-packet",
+        { kind: kind.kind, recordType: "time-window-index" }
+      );
+    }
+    entries.sort(compareTimeWindowEntries);
+    const observedAt = nextObservedAt(
+      observationCandidate,
+      existing?.index.observedAt
+    );
+    if (!isTimeIndexTimestamp(observedAt)) {
+      fail(
+        "STORAGE_OPERATION_FAILED",
+        "The accepted-time index observation range is exhausted.",
+        "write-packet",
+        { kind: kind.kind, recordType: "time-window-index" }
+      );
+    }
+    const { prepared } = prepareTimeWindowIndex(
+      kind,
+      bounds,
+      observedAt,
+      entries,
+      "write-packet",
+      config.maxReadBytes
+    );
+    const stored = await putTimeWindowIndexConditionally(
+      config,
+      kind,
+      bounds,
+      prepared,
+      existing?.downloaded.etag ?? null,
+      context
+    );
+    if (stored) return;
+  }
+
+  fail(
+    "STORAGE_OPERATION_FAILED",
+    "The accepted-time index could not converge within its retry bound.",
+    "write-packet",
+    {
+      kind: kind.kind,
+      recordType: "time-window-index",
+      retryable: true,
+    }
+  );
+}
+
 function parseStoredJson(
   downloaded: DownloadedRecord,
   operation: ImmutableJsonPacketStorageOperation,
-  kind: string
+  kind: string,
+  maxMembers = MAX_JSON_MEMBERS
 ): SafeJsonValue {
   try {
     const text = decoder.decode(downloaded.bytes);
     const parsed: unknown = JSON.parse(text);
-    const snapshot = snapshotJson(parsed, operation, false);
+    const snapshot = snapshotJson(parsed, operation, false, maxMembers);
     if (!exactBytesEqual(downloaded.bytes, encodeCanonical(snapshot))) {
       throw new Error("non-canonical");
     }
@@ -1876,17 +2666,30 @@ function resolveStoreConfig(
       fail("INVALID_CONFIG", "A configured packet kind is invalid.", "write-packet");
     }
     const prefix = normalizePrefix(candidate.prefix);
-    if (
-      prefixes.some(
-        (existing) =>
-          prefix === existing ||
-          prefix.startsWith(`${existing}/`) ||
-          existing.startsWith(`${prefix}/`)
-      )
-    ) {
-      fail("INVALID_CONFIG", "Packet prefixes must be unique and non-overlapping.", "write-packet");
+    const timeIndex = resolveTimeIndex(candidate.timeIndex);
+    const candidatePrefixes = [
+      prefix,
+      ...(timeIndex === undefined ? [] : [timeIndex.prefix]),
+    ];
+    for (const candidatePrefix of candidatePrefixes) {
+      if (
+        prefixes.some(
+          (existing) =>
+            candidatePrefix === existing ||
+            candidatePrefix.startsWith(`${existing}/`) ||
+            existing.startsWith(`${candidatePrefix}/`)
+        ) ||
+        candidatePrefixes.some(
+          (other) =>
+            other !== candidatePrefix &&
+            (candidatePrefix.startsWith(`${other}/`) ||
+              other.startsWith(`${candidatePrefix}/`))
+        )
+      ) {
+        fail("INVALID_CONFIG", "Packet prefixes must be unique and non-overlapping.", "write-packet");
+      }
+      prefixes.push(candidatePrefix);
     }
-    prefixes.push(prefix);
     const packetSchema = resolveSchema(candidate.packetSchema, "write-packet");
     const checkpointSchema =
       candidate.checkpointSchema === undefined
@@ -1918,6 +2721,7 @@ function resolveStoreConfig(
         ...(checkpointSchema === undefined ? {} : { checkpointSchema }),
         safeDeadLetterCodes: new Set(safeCodes),
         maxPacketBytes,
+        ...(timeIndex === undefined ? {} : { timeIndex }),
       })
     );
   }
@@ -1944,6 +2748,198 @@ function kindFor(
     fail("INVALID_ARGUMENT", "The packet kind is not registered.", operation);
   }
   return resolved;
+}
+
+async function readVerifiedPacket(
+  config: ResolvedStoreConfig,
+  kind: ResolvedKind,
+  packetId: string,
+  operation: "read-packet" | "read-time-window",
+  context: OperationContext
+): Promise<{
+  readonly packet: SafeJsonValue;
+  readonly sha256: string;
+  readonly byteLength: number;
+}> {
+  const downloaded = await downloadRecord(
+    config,
+    kind.kind,
+    `${kind.prefix}/packets/${packetId}.json`,
+    kind.maxPacketBytes,
+    operation,
+    context
+  );
+  assertStoredMetadata(
+    downloaded,
+    {
+      kind: kind.kind,
+      recordId: packetId,
+      recordType: "packet",
+      schemaId: kind.packetSchema.id,
+      schemaVersion: kind.packetSchema.version,
+    },
+    operation
+  );
+  const parsed = parseStoredJson(downloaded, operation, kind.kind);
+  if (
+    !isRecord(parsed) ||
+    !hasExactKeys(parsed, [
+      "kind",
+      "payload",
+      "recordId",
+      "recordType",
+      "schema",
+      "storageSchema",
+    ]) ||
+    parsed.storageSchema !== IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA ||
+    parsed.recordType !== "packet" ||
+    parsed.kind !== kind.kind ||
+    parsed.recordId !== packetId ||
+    !isRecord(parsed.schema) ||
+    !hasExactKeys(parsed.schema, ["id", "version"]) ||
+    parsed.schema.id !== kind.packetSchema.id ||
+    parsed.schema.version !== kind.packetSchema.version
+  ) {
+    fail("CORRUPT_RECORD", "The packet envelope is invalid.", operation, {
+      kind: kind.kind,
+      recordType: "packet",
+    });
+  }
+  return Object.freeze({
+    packet: validateSchemaValue(kind.packetSchema, parsed.payload, operation),
+    sha256: sha256(downloaded.bytes),
+    byteLength: downloaded.bytes.byteLength,
+  });
+}
+
+async function readTimeWindowPropertiesIfPresent(
+  config: ResolvedStoreConfig,
+  kind: ResolvedKind,
+  bounds: TimeWindowBounds,
+  context: OperationContext
+): Promise<
+  | {
+      readonly descriptor: ImmutableJsonPacketTimeWindowDescriptor;
+      readonly byteLength: number;
+    }
+  | undefined
+> {
+  if (!kind.timeIndex) {
+    fail(
+      "INVALID_CONFIG",
+      "No accepted-time index is registered for this kind.",
+      "list-time-windows",
+      { kind: kind.kind, recordType: "time-window-index" }
+    );
+  }
+  const client = config.container.getBlockBlobClient(
+    timeWindowPath(kind.timeIndex, bounds.windowStart)
+  );
+  const getProperties = client.getProperties?.bind(client);
+  if (!getProperties) {
+    fail(
+      "INVALID_CONFIG",
+      "The accepted-time index properties driver is not configured.",
+      "list-time-windows",
+      { kind: kind.kind, recordType: "time-window-index" }
+    );
+  }
+  let properties: unknown;
+  try {
+    properties = await context.race(
+      getProperties({ abortSignal: context.signal })
+    );
+  } catch (error) {
+    if (error instanceof ImmutableJsonPacketStorageError) throw error;
+    if (isNotFound(error)) return undefined;
+    throw asStorageFailure(
+      error,
+      "list-time-windows",
+      kind.kind,
+      "time-window-index"
+    );
+  }
+  const safeProperties = snapshotProviderDataRecord(
+    properties,
+    ["contentLength", "contentType", "etag", "metadata"],
+    4,
+    "list-time-windows",
+    kind.kind,
+    "time-window-index"
+  );
+  const contentLength = safeProperties.contentLength;
+  if (
+    !Number.isSafeInteger(contentLength) ||
+    (contentLength as number) < 1 ||
+    (contentLength as number) > config.maxReadBytes ||
+    safeProperties.contentType !== IMMUTABLE_JSON_PACKET_CONTENT_TYPE
+  ) {
+    fail(
+      "CORRUPT_RECORD",
+      "The accepted-time index properties are incomplete.",
+      "list-time-windows",
+      { kind: kind.kind, recordType: "time-window-index" }
+    );
+  }
+  providerEtag(
+    safeProperties.etag,
+    "list-time-windows",
+    kind.kind,
+    "download",
+    "time-window-index"
+  );
+  const metadata = normalizeMetadata(
+    snapshotProviderDataRecord(
+      safeProperties.metadata,
+      undefined,
+      32,
+      "list-time-windows",
+      kind.kind,
+      "time-window-index"
+    ),
+    "list-time-windows",
+    kind.kind
+  );
+  const byteLength = contentLength as number;
+  const recordId = timeWindowRecordId(
+    bounds.windowStart,
+    kind.timeIndex.partition
+  );
+  if (
+    !hasExactKeys(metadata, TIME_WINDOW_INDEX_METADATA_KEYS) ||
+    metadata.plasiusrecordschema !== IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA ||
+    metadata.plasiusrecordtype !== "time-window-index" ||
+    metadata.plasiuskind !== kind.kind ||
+    metadata.plasiusrecordid !== recordId ||
+    metadata.plasiusschemaid !== TIME_WINDOW_INDEX_SCHEMA_ID ||
+    metadata.plasiusschemaversion !== TIME_WINDOW_INDEX_SCHEMA_VERSION ||
+    metadata.plasiusbytelength !== String(byteLength) ||
+    !SHA256_PATTERN.test(metadata.plasiussha256 ?? "") ||
+    metadata.plasiuswindowstart !== bounds.windowStart ||
+    metadata.plasiuswindowend !== bounds.windowEnd ||
+    !isTimeIndexTimestamp(metadata.plasiusobservedat) ||
+    !SHA256_PATTERN.test(metadata.plasiussnapshot ?? "") ||
+    !DECIMAL_BYTE_LENGTH_PATTERN.test(metadata.plasiusentrycount ?? "") ||
+    Number(metadata.plasiusentrycount) < 1 ||
+    Number(metadata.plasiusentrycount) >
+      timeWindowIndexEntryLimit(config.maxManifestEntries)
+  ) {
+    fail(
+      "CORRUPT_RECORD",
+      "The accepted-time index properties are invalid.",
+      "list-time-windows",
+      { kind: kind.kind, recordType: "time-window-index" }
+    );
+  }
+  return Object.freeze({
+    byteLength,
+    descriptor: Object.freeze({
+      windowStart: bounds.windowStart,
+      windowEnd: bounds.windowEnd,
+      observedAt: metadata.plasiusobservedat,
+      snapshot: metadata.plasiussnapshot,
+    }),
+  });
 }
 
 function receiptFor(
@@ -2001,6 +2997,34 @@ export function createImmutableJsonPacketStore<
       const kind = kindFor(config, kindInput, "write-packet");
       const packetId = normalizeIdentifier(packetIdInput, "write-packet");
       const payload = validateSchemaValue(kind.packetSchema, packet, "write-packet");
+      let acceptedAt: string | undefined;
+      let acceptedWindow: TimeWindowBounds | undefined;
+      if (kind.timeIndex) {
+        const timestamp = isRecord(payload)
+          ? payload[kind.timeIndex.timestampField]
+          : undefined;
+        if (!isTimeIndexTimestamp(timestamp)) {
+          fail(
+            "SCHEMA_REJECTED",
+            "The structured packet has no canonical registered acceptance time.",
+            "write-packet",
+            { kind: kind.kind, recordType: "packet" }
+          );
+        }
+        acceptedAt = timestamp;
+        acceptedWindow = alignedPartitionBounds(
+          acceptedAt,
+          kind.timeIndex.partition
+        );
+        if (!isTimeIndexTimestamp(acceptedWindow.windowEnd)) {
+          fail(
+            "SCHEMA_REJECTED",
+            "The structured packet acceptance time is outside the supported range.",
+            "write-packet",
+            { kind: kind.kind, recordType: "packet" }
+          );
+        }
+      }
       const envelope = snapshotJson(
         {
           storageSchema: IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA,
@@ -2032,6 +3056,21 @@ export function createImmutableJsonPacketStore<
         resolveTimeout(operationOptions.timeoutMs, config.timeoutMs, "write-packet"),
         operationOptions.signal,
         async (context) => {
+          const observationCandidate =
+            kind.timeIndex === undefined
+              ? undefined
+              : now(config, "write-packet");
+          if (
+            observationCandidate !== undefined &&
+            !isTimeIndexTimestamp(observationCandidate.toISOString())
+          ) {
+            fail(
+              "INVALID_CONFIG",
+              "The server clock is outside the accepted-time index range.",
+              "write-packet",
+              { kind: kind.kind, recordType: "time-window-index" }
+            );
+          }
           const write = await putImmutable(
             config,
             kind.kind,
@@ -2042,6 +3081,23 @@ export function createImmutableJsonPacketStore<
             "packet",
             context
           );
+          if (
+            kind.timeIndex !== undefined &&
+            acceptedAt !== undefined &&
+            acceptedWindow !== undefined &&
+            observationCandidate !== undefined
+          ) {
+            await ensurePacketTimeIndexEntry(
+              config,
+              kind,
+              acceptedWindow,
+              acceptedAt,
+              packetId,
+              prepared,
+              observationCandidate,
+              context
+            );
+          }
           return Object.freeze({
             ...receiptFor(kind, "packet", packetId, prepared, write),
             recordType: "packet" as const,
@@ -2060,54 +3116,14 @@ export function createImmutableJsonPacketStore<
         resolveTimeout(operationOptions.timeoutMs, config.timeoutMs, "read-packet"),
         operationOptions.signal,
         async (context) => {
-          const downloaded = await downloadRecord(
+          const verified = await readVerifiedPacket(
             config,
-            kind.kind,
-            `${kind.prefix}/packets/${packetId}.json`,
-            kind.maxPacketBytes,
+            kind,
+            packetId,
             "read-packet",
             context
           );
-          assertStoredMetadata(
-            downloaded,
-            {
-              kind: kind.kind,
-              recordId: packetId,
-              recordType: "packet",
-              schemaId: kind.packetSchema.id,
-              schemaVersion: kind.packetSchema.version,
-            },
-            "read-packet"
-          );
-          const parsed = parseStoredJson(downloaded, "read-packet", kind.kind);
-          if (
-            !isRecord(parsed) ||
-            !hasExactKeys(parsed, [
-              "kind",
-              "payload",
-              "recordId",
-              "recordType",
-              "schema",
-              "storageSchema",
-            ]) ||
-            parsed.storageSchema !== IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA ||
-            parsed.recordType !== "packet" ||
-            parsed.kind !== kind.kind ||
-            parsed.recordId !== packetId ||
-            !isRecord(parsed.schema) ||
-            !hasExactKeys(parsed.schema, ["id", "version"]) ||
-            parsed.schema.id !== kind.packetSchema.id ||
-            parsed.schema.version !== kind.packetSchema.version
-          ) {
-            fail("CORRUPT_RECORD", "The packet envelope is invalid.", "read-packet", {
-              kind: kind.kind,
-            });
-          }
-          return validateSchemaValue(
-            kind.packetSchema,
-            parsed.payload,
-            "read-packet"
-          );
+          return verified.packet;
         }
       );
     },
@@ -2285,6 +3301,255 @@ export function createImmutableJsonPacketStore<
             byteLength,
             complete: nextCursor === undefined,
             ...(nextCursor === undefined ? {} : { nextCursor }),
+          });
+        }
+      );
+    },
+
+    readPacketTimeWindow: async (kindInput, operationOptions) => {
+      const kind = kindFor(config, kindInput, "read-time-window");
+      if (!kind.timeIndex) {
+        fail(
+          "INVALID_CONFIG",
+          "No accepted-time index is registered for this kind.",
+          "read-time-window",
+          { kind: kind.kind, recordType: "time-window-index" }
+        );
+      }
+      const timeIndex = kind.timeIndex;
+      if (!isRecord(operationOptions)) {
+        fail(
+          "INVALID_ARGUMENT",
+          "Accepted-time window options are required.",
+          "read-time-window",
+          { kind: kind.kind, recordType: "time-window-index" }
+        );
+      }
+      const bounds = assertExactTimeWindow(
+        operationOptions.windowStart,
+        operationOptions.windowEnd,
+        timeIndex.partition,
+        "read-time-window",
+        kind.kind,
+        true
+      );
+      const maxItems = resolveTimeWindowLimit(
+        operationOptions.maxItems,
+        timeWindowIndexEntryLimit(config.maxManifestEntries),
+        "maxItems",
+        "read-time-window",
+        kind.kind
+      );
+      const maxBytes = resolveTimeWindowLimit(
+        operationOptions.maxBytes,
+        config.maxReadBytes,
+        "maxBytes",
+        "read-time-window",
+        kind.kind
+      );
+      return withContext(
+        "read-time-window",
+        kind.kind,
+        resolveTimeout(
+          operationOptions.timeoutMs,
+          config.timeoutMs,
+          "read-time-window"
+        ),
+        operationOptions.signal,
+        async (context) => {
+          const stored = await readTimeWindowIndexIfPresent(
+            config,
+            kind,
+            bounds,
+            "read-time-window",
+            context
+          );
+          if (!stored) {
+            return Object.freeze({
+              kind: kind.kind,
+              windowStart: bounds.windowStart,
+              windowEnd: bounds.windowEnd,
+              observedAt: bounds.windowStart,
+              snapshot: timeWindowSnapshot(
+                kind.kind,
+                bounds,
+                [],
+                "read-time-window"
+              ),
+              byteLength: 0,
+              complete: true as const,
+              packets: Object.freeze([]) as readonly ImmutableJsonPacketTimeWindowEntry[],
+            });
+          }
+          if (stored.index.entries.length > maxItems) {
+            fail(
+              "LIMIT_EXCEEDED",
+              "The accepted-time window exceeds its item limit.",
+              "read-time-window",
+              { kind: kind.kind, recordType: "time-window-index" }
+            );
+          }
+          let byteLength = 0;
+          for (const entry of stored.index.entries) {
+            if (
+              entry.byteLength > maxBytes - byteLength ||
+              !Number.isSafeInteger(byteLength + entry.byteLength)
+            ) {
+              fail(
+                "LIMIT_EXCEEDED",
+                "The accepted-time window exceeds its packet-byte limit.",
+                "read-time-window",
+                { kind: kind.kind, recordType: "time-window-index" }
+              );
+            }
+            byteLength += entry.byteLength;
+          }
+          const packets: ImmutableJsonPacketTimeWindowEntry[] = [];
+          for (const entry of stored.index.entries) {
+            context.throwIfAborted();
+            const verified = await readVerifiedPacket(
+              config,
+              kind,
+              entry.packetId,
+              "read-time-window",
+              context
+            );
+            const packetAcceptedAt = isRecord(verified.packet)
+              ? verified.packet[timeIndex.timestampField]
+              : undefined;
+            if (
+              verified.sha256 !== entry.sha256 ||
+              verified.byteLength !== entry.byteLength ||
+              packetAcceptedAt !== entry.acceptedAt
+            ) {
+              fail(
+                "CORRUPT_RECORD",
+                "An accepted-time entry does not match its immutable packet.",
+                "read-time-window",
+                { kind: kind.kind, recordType: "time-window-index" }
+              );
+            }
+            packets.push(
+              Object.freeze({
+                ...entry,
+                packet: verified.packet,
+              })
+            );
+          }
+          return Object.freeze({
+            kind: kind.kind,
+            windowStart: bounds.windowStart,
+            windowEnd: bounds.windowEnd,
+            observedAt: stored.index.observedAt,
+            snapshot: stored.index.snapshot,
+            byteLength,
+            complete: true as const,
+            packets: Object.freeze(packets),
+          });
+        }
+      );
+    },
+
+    listPacketTimeWindows: async (kindInput, operationOptions) => {
+      const kind = kindFor(config, kindInput, "list-time-windows");
+      if (!kind.timeIndex) {
+        fail(
+          "INVALID_CONFIG",
+          "No accepted-time index is registered for this kind.",
+          "list-time-windows",
+          { kind: kind.kind, recordType: "time-window-index" }
+        );
+      }
+      const timeIndex = kind.timeIndex;
+      if (
+        !isRecord(operationOptions) ||
+        operationOptions.partition !== timeIndex.partition
+      ) {
+        fail(
+          "INVALID_ARGUMENT",
+          "The accepted-time partition is invalid.",
+          "list-time-windows",
+          { kind: kind.kind, recordType: "time-window-index" }
+        );
+      }
+      const bounds = assertExactTimeWindow(
+        operationOptions.windowStart,
+        operationOptions.windowEnd,
+        timeIndex.partition,
+        "list-time-windows",
+        kind.kind,
+        false
+      );
+      const maxItems = resolveTimeWindowLimit(
+        operationOptions.maxItems,
+        timeWindowIndexEntryLimit(config.maxManifestEntries),
+        "maxItems",
+        "list-time-windows",
+        kind.kind
+      );
+      const maxBytes = resolveTimeWindowLimit(
+        operationOptions.maxBytes,
+        config.maxReadBytes,
+        "maxBytes",
+        "list-time-windows",
+        kind.kind
+      );
+      const step = partitionMilliseconds(timeIndex.partition);
+      const startMs = new Date(bounds.windowStart).getTime();
+      const endMs = new Date(bounds.windowEnd).getTime();
+      const count = (endMs - startMs) / step;
+      if (!Number.isSafeInteger(count) || count < 1 || count > maxItems) {
+        fail(
+          "LIMIT_EXCEEDED",
+          "The accepted-time window range exceeds its exact-read limit.",
+          "list-time-windows",
+          { kind: kind.kind, recordType: "time-window-index" }
+        );
+      }
+      return withContext(
+        "list-time-windows",
+        kind.kind,
+        resolveTimeout(
+          operationOptions.timeoutMs,
+          config.timeoutMs,
+          "list-time-windows"
+        ),
+        operationOptions.signal,
+        async (context) => {
+          let byteLength = 0;
+          const windows: ImmutableJsonPacketTimeWindowDescriptor[] = [];
+          for (let index = 0; index < count; index += 1) {
+            context.throwIfAborted();
+            const windowStart = new Date(startMs + index * step).toISOString();
+            const exactBounds = alignedPartitionBounds(
+              windowStart,
+              timeIndex.partition
+            );
+            const result = await readTimeWindowPropertiesIfPresent(
+              config,
+              kind,
+              exactBounds,
+              context
+            );
+            if (!result) continue;
+            if (
+              result.byteLength > maxBytes - byteLength ||
+              !Number.isSafeInteger(byteLength + result.byteLength)
+            ) {
+              fail(
+                "LIMIT_EXCEEDED",
+                "The accepted-time index range exceeds its byte limit.",
+                "list-time-windows",
+                { kind: kind.kind, recordType: "time-window-index" }
+              );
+            }
+            byteLength += result.byteLength;
+            windows.push(result.descriptor);
+          }
+          return Object.freeze({
+            kind: kind.kind,
+            complete: true as const,
+            windows: Object.freeze(windows),
           });
         }
       );

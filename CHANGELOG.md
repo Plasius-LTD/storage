@@ -9,16 +9,22 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 - **Added**
-  - (placeholder)
+  - Add opt-in, fixed-prefix accepted-time packet indexes with packet-first
+    replay repair, bounded CAS window heads, exact complete window reads, and
+    exact-path window snapshot discovery for hourly/daily processors (task #51).
 
 - **Changed**
-  - (placeholder)
+  - Consume the released `@plasius/schema` 1.4.1 and
+    `@plasius/entity-manager` 1.2.x lines used by feedback packet producers.
 
 - **Fixed**
   - (placeholder)
 
 - **Security**
-  - (placeholder)
+  - Snapshot exact-window Blob properties and integrity metadata only from
+    bounded plain data descriptors. Null, accessor-bearing, proxy-failing, or
+    otherwise malformed provider responses now fail with fixed redacted
+    corruption errors without invoking provider-controlled getters.
 
 ## [1.2.1] - 2026-08-27
 
@@ -35,6 +41,10 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     npm cannot interpret the artifact directory as a hosted Git repository.
 
 - **Security**
+  - Prevent scheduled processors from treating packet-ID Blob traversal as an
+    accepted-time snapshot: index entries are payload-free, append-only,
+    integrity-bound, item/byte/deadline bounded, late-arrival detectable, and
+    never discovered through a retention-wide prefix scan.
   - Added zero-dependency, path-only repository and npm-package gates that
     prevent tabular exports, contributor registries, signed CLA artifacts, and
     privacy-marked registries from entering source control or release artifacts
