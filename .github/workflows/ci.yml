@@ -32,13 +32,15 @@ jobs:
     needs: trusted_head
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["self-hosted","Linux","X64"]') }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }}
+          package-manager-cache: false
 
       - name: Verify private artifact policy
         run: npm run privacy:check
@@ -153,11 +155,12 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
       - name: Verify public artifact integrity
         run: node ./scripts/verify-public-artifacts.cjs '--package-dir' '.'
   # END PLASIUS PUBLIC ARTIFACT INTEGRITY JOB
