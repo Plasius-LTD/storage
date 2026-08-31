@@ -15,6 +15,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
+  - Preserved hosted pull-request isolation while disabling package-manager
+    cache finalization and bounding self-hosted main validation runtime.
   - (placeholder)
 
 - **Security**

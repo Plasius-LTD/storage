@@ -29,6 +29,11 @@ describe("release workflow trust boundaries", () => {
         /runs-on: \$\{\{ fromJSON\(github\.event_name == 'pull_request' && '\["ubuntu-latest"\]' \|\| '\["self-hosted","Linux","X64"\]'\) \}\}/gu,
       ),
     ).toHaveLength(2);
+    expect(ciWorkflow.match(/actions\/checkout@v5/gu)).toHaveLength(2);
+    expect(ciWorkflow.match(/actions\/setup-node@v6/gu)).toHaveLength(2);
+    expect(ciWorkflow).toContain("cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }}");
+    expect(ciWorkflow.match(/package-manager-cache: false/gu)).toHaveLength(2);
+    expect(ciWorkflow).toContain("timeout-minutes: 30");
   });
 
   it("binds a second publication run to the prepared main SHA and successful CI", () => {
