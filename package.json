@@ -34,31 +34,31 @@
   "license": "MIT",
   "dependencies": {
     "@azure/storage-file-share": "^12.32.0",
-    "@plasius/entity-manager": "^1.2.0",
-    "@plasius/schema": "^1.4.1"
+    "@plasius/entity-manager": "^1.2.2",
+    "@plasius/schema": "^1.4.3"
   },
   "devDependencies": {
-    "@azure/cosmos": "^4.9.3",
+    "@azure/cosmos": "^4.10.0",
     "@azure/storage-blob": "^12.33.0",
     "@eslint/js": "^10.0.1",
-    "@testing-library/react": "^16.3.2",
-    "@types/node": "^25.7.0",
-    "@types/react": "^19.2.14",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^25.9.5",
+    "@types/react": "^19.2.18",
     "@types/uuid": "^11.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.59.3",
-    "@typescript-eslint/parser": "^8.59.3",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@typescript-eslint/eslint-plugin": "^8.69.0",
+    "@typescript-eslint/parser": "^8.69.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "ajv": "^8.20.0",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.3.0",
-    "globals": "^17.6.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
     "npm-run-all": "^4.1.5",
-    "react": "^19.2.6",
+    "react": "^19.2.8",
     "tsup": "^8.5.1",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.13",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6",
-    "zod": "^4.4.3"
+    "vitest": "^4.1.11",
+    "zod": "^4.5.4"
   },
   "exports": {
     ".": {
