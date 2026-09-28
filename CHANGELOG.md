@@ -8,6 +8,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.3.2] - 2026-09-28
+
 - Refresh npm dependency lockfile to current supported stable versions (weekly maintenance, 2026-09-28). Refresh published Plasius package baselines after upstream releases.
 
 - **Added**
@@ -407,7 +421,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.2...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -443,3 +457,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.2.1]: https://github.com/Plasius-LTD/storage/releases/tag/v1.2.1
 [1.3.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.0
 [1.3.1]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.1
+[1.3.2]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.2
