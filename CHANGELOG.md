@@ -15,6 +15,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.3.8] - 2026-10-23
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
   - Retain indexed outbox retryability across head-read/provider failures and
     legacy durable-packet capacity or corruption repair, while preserving
     terminal immutable conflicts and bounded caller-owned reconciliation.
@@ -504,7 +518,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.7...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.8...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -546,3 +560,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.5]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.5
 [1.3.6]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.6
 [1.3.7]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.7
+[1.3.8]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.8
