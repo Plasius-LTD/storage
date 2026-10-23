@@ -1747,6 +1747,20 @@ function asStorageFailure(
   );
 }
 
+function asAmbiguousPacketWriteFailure(
+  error: unknown,
+  kind: string,
+  recordType: "packet" | "time-window-index"
+): ImmutableJsonPacketStorageError {
+  const failure = asStorageFailure(error, "write-packet", kind, recordType);
+  return failure.code === "STORAGE_OPERATION_FAILED"
+    ? new ImmutableJsonPacketStorageError(
+        { ...failure.diagnostic, retryable: true },
+        { cause: error }
+      )
+    : failure;
+}
+
 async function withContext<T>(
   operation: ImmutableJsonPacketStorageOperation,
   kind: string,
@@ -2311,11 +2325,9 @@ async function putTimeWindowIndexConditionally(
     );
     return true;
   } catch (error) {
-    if (error instanceof ImmutableJsonPacketStorageError) throw error;
     if (isBlobConditionalConflict(error)) return false;
-    throw asStorageFailure(
+    throw asAmbiguousPacketWriteFailure(
       error,
-      "write-packet",
       kind.kind,
       "time-window-index"
     );
@@ -2462,9 +2474,7 @@ async function reservePacketTimeIndexEntry(
     ) {
       // A previous attempt may already have committed this packet. A failed
       // existence lookup cannot discharge the caller's durable outbox item.
-      fail(error.code, error.message, "write-packet", {
-        kind: kind.kind, recordType: "packet", retryable: true, cause: error,
-      });
+      throw asAmbiguousPacketWriteFailure(error, kind.kind, "packet");
     }
     if (
       !(error instanceof ImmutableJsonPacketStorageError) ||
@@ -2503,7 +2513,9 @@ async function reservePacketTimeIndexEntry(
     "write-packet",
     "time-window-index",
     context
-  );
+  ).catch((error: unknown) => {
+    throw asAmbiguousPacketWriteFailure(error, kind.kind, "time-window-index");
+  });
   await ensurePacketTimeIndexEntry(
     config,
     kind,
