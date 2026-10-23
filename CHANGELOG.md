@@ -15,7 +15,9 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
-  - (placeholder)
+  - Require explicit provider BlobNotFound evidence for accepted-time head
+    absence and record not-found results; fail closed with redacted diagnostics
+    for ambiguous 404s and adapter-domain errors instead of false empty snapshots.
 
 - **Security**
   - (placeholder)

@@ -305,7 +305,16 @@ Schema registration fails closed unless its PII audit is empty.
   own checkpoint, and a late packet changes the affected snapshot. Provider
   properties and metadata are admitted only as bounded plain data descriptors;
   accessors and dependency traps are never invoked and fail with fixed redacted
-  corruption errors.
+  corruption errors. Absence requires the exact requested Blob operation to fail
+  with an own plain-data `code: "BlobNotFound"` and either HTTP 404 (`statusCode`
+  or `status`) or no HTTP status. Status-only 404, missing-container, routing,
+  authorization-shaped 404, contradictory non-404 status, and adapter-domain
+  `NOT_FOUND` are failures, never complete empty snapshots. Injected adapters must
+  preserve that provider code rather than translating every HTTP 404 to absence.
+  Exceptions during error inspection (including proxy descriptor traps) also
+  fail closed with redacted diagnostics.
+  Packet/record downloads also require explicit `BlobNotFound` before reporting
+  `NOT_FOUND`; provider error messages, paths and credentials remain redacted.
 - A reserved head can temporarily reference a packet whose upload was interrupted.
   Window reads fail with fixed retryable `STORAGE_OPERATION_FAILED` until the
   caller's outbox replays the same write; they never omit the entry or return

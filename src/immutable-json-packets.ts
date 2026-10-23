@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { isProxy } from "node:util/types";
 
 export const IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA =
   "plasius.immutable-json-packet-storage/1" as const;
@@ -1627,30 +1628,42 @@ function storageToken(error: unknown): {
   readonly status?: number;
   readonly code?: string;
 } {
-  if (!isRecord(error)) return {};
-  const statusDescriptor =
-    Object.getOwnPropertyDescriptor(error, "statusCode") ??
-    Object.getOwnPropertyDescriptor(error, "status");
-  const codeDescriptor = Object.getOwnPropertyDescriptor(error, "code");
-  const status =
-    statusDescriptor && "value" in statusDescriptor &&
-    typeof statusDescriptor.value === "number"
-      ? statusDescriptor.value
-      : undefined;
-  const code =
-    codeDescriptor && "value" in codeDescriptor &&
-    typeof codeDescriptor.value === "string"
-      ? codeDescriptor.value
-      : undefined;
-  return {
-    ...(status === undefined ? {} : { status }),
-    ...(code === undefined ? {} : { code }),
-  };
+  try {
+    if (!isRecord(error)) return {};
+    const statusDescriptor =
+      Object.getOwnPropertyDescriptor(error, "statusCode") ??
+      Object.getOwnPropertyDescriptor(error, "status");
+    const codeDescriptor = Object.getOwnPropertyDescriptor(error, "code");
+    const status =
+      statusDescriptor && "value" in statusDescriptor &&
+      typeof statusDescriptor.value === "number"
+        ? statusDescriptor.value
+        : undefined;
+    const code =
+      codeDescriptor && "value" in codeDescriptor &&
+      typeof codeDescriptor.value === "string"
+        ? codeDescriptor.value
+        : undefined;
+    return {
+      ...(status === undefined ? {} : { status }),
+      ...(code === undefined ? {} : { code }),
+    };
+  } catch {
+    return {};
+  }
 }
 
 function isNotFound(error: unknown): boolean {
-  const { status, code } = storageToken(error);
-  return code === "BlobNotFound" || (status === 404 && code !== "ContainerNotFound");
+  try {
+    if (!isRecord(error) || storageToken(error).code !== "BlobNotFound") return false;
+    // An opaque, malformed, or conflicting status is not an omitted status.
+    return ["statusCode", "status"].every((name) => {
+      const descriptor = Object.getOwnPropertyDescriptor(error, name);
+      return descriptor === undefined || ("value" in descriptor && descriptor.value === 404);
+    });
+  } catch {
+    return false;
+  }
 }
 
 function isBlobConditionalConflict(error: unknown): boolean {
@@ -1721,13 +1734,23 @@ function assertProviderLeaseToken(
   }
 }
 
+function isStorageError(error: unknown): error is ImmutableJsonPacketStorageError {
+  try {
+    if (isProxy(error) || !(error instanceof ImmutableJsonPacketStorageError)) return false;
+    const code = Object.getOwnPropertyDescriptor(error, "code");
+    return code !== undefined && "value" in code && typeof code.value === "string";
+  } catch {
+    return false;
+  }
+}
+
 function asStorageFailure(
   error: unknown,
   operation: ImmutableJsonPacketStorageOperation,
   kind: string,
   recordType?: ImmutableJsonPacketStorageDiagnostic["recordType"]
 ): ImmutableJsonPacketStorageError {
-  if (error instanceof ImmutableJsonPacketStorageError) return error;
+  if (isStorageError(error)) return error;
   const { status } = storageToken(error);
   return new ImmutableJsonPacketStorageError(
     {
@@ -2045,8 +2068,7 @@ async function downloadRecord(
   path: string,
   maxBytes: number,
   operation: ImmutableJsonPacketStorageOperation,
-  context: OperationContext,
-  requireExplicitAbsence = false
+  context: OperationContext
 ): Promise<DownloadedRecord> {
   let response: JsonPacketBlobDownloadResponsePort;
   try {
@@ -2056,13 +2078,14 @@ async function downloadRecord(
         .download(0, undefined, { abortSignal: context.signal })
     );
   } catch (error) {
-    if (error instanceof ImmutableJsonPacketStorageError) throw error;
-    const token = storageToken(error);
-    if (
-      isNotFound(error) &&
-      (!requireExplicitAbsence ||
-        (token.status === 404 && token.code === "BlobNotFound"))
-    ) {
+    if (isStorageError(error)) {
+      if (error.code === "NOT_FOUND") {
+        // An adapter's domain error does not prove that this exact Blob is absent.
+        throw asStorageFailure(undefined, operation, kind);
+      }
+      throw error;
+    }
+    if (isNotFound(error)) {
       fail("NOT_FOUND", "The requested JSON record was not found.", operation, {
         kind,
       });
@@ -2129,7 +2152,7 @@ async function downloadRecord(
         })()
       );
     } catch (error) {
-      if (error instanceof ImmutableJsonPacketStorageError) throw error;
+      if (isStorageError(error)) throw error;
       throw asStorageFailure(error, operation, kind);
     }
   }
@@ -2457,8 +2480,7 @@ async function reservePacketTimeIndexEntry(
       `${kind.prefix}/packets/${packetId}.json`,
       kind.maxPacketBytes,
       "write-packet",
-      context,
-      true
+      context
     );
     assertDownloadedRecord(
       existing,
@@ -2959,7 +2981,17 @@ async function readTimeWindowPropertiesIfPresent(
       getProperties({ abortSignal: context.signal })
     );
   } catch (error) {
-    if (error instanceof ImmutableJsonPacketStorageError) throw error;
+    if (isStorageError(error)) {
+      if (error.code === "NOT_FOUND") {
+        throw asStorageFailure(
+          undefined,
+          "list-time-windows",
+          kind.kind,
+          "time-window-index"
+        );
+      }
+      throw error;
+    }
     if (isNotFound(error)) return undefined;
     throw asStorageFailure(
       error,
