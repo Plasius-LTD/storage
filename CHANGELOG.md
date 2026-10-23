@@ -15,7 +15,9 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
-  - (placeholder)
+  - Retain indexed outbox retryability across head-read/provider failures and
+    legacy durable-packet capacity or corruption repair, while preserving
+    terminal immutable conflicts and bounded caller-owned reconciliation.
 
 - **Security**
   - (placeholder)

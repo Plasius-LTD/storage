@@ -2473,6 +2473,7 @@ async function reservePacketTimeIndexEntry(
 ): Promise<void> {
   // Legacy packets may exist without a head or identity reservation. Verify any
   // such packet before publishing a reservation that could poison a window.
+  let packetExists = false;
   try {
     const existing = await downloadRecord(
       config,
@@ -2489,6 +2490,7 @@ async function reservePacketTimeIndexEntry(
       kind.kind,
       "IMMUTABLE_CONFLICT"
     );
+    packetExists = true;
   } catch (error) {
     if (
       error instanceof ImmutableJsonPacketStorageError &&
@@ -2509,45 +2511,67 @@ async function reservePacketTimeIndexEntry(
   // Deterministic, payload-free and create-only: competing accepted times must
   // not reserve two windows for the same immutable packet ID. The envelope uses
   // the existing index schema; acceptedAt fixes observedAt for exact replay.
-  const { prepared } = prepareTimeWindowIndex(
-    kind,
-    bounds,
-    acceptedAt,
-    [
-      {
-        acceptedAt,
-        packetId,
-        schemaId: packet.schemaId,
-        schemaVersion: packet.schemaVersion,
-        sha256: packet.digest,
-        byteLength: packet.bytes.byteLength,
-      },
-    ],
-    "write-packet",
-    config.maxReadBytes
-  );
-  await putImmutable(
-    config,
-    kind.kind,
-    `${kind.timeIndex!.prefix}/reservations/${packetId}.json`,
-    prepared,
-    config.maxReadBytes,
-    "write-packet",
-    "time-window-index",
-    context
-  ).catch((error: unknown) => {
-    throw asAmbiguousPacketWriteFailure(error, kind.kind, "time-window-index");
-  });
-  await ensurePacketTimeIndexEntry(
-    config,
-    kind,
-    bounds,
-    acceptedAt,
-    packetId,
-    packet,
-    observationCandidate,
-    context
-  );
+  try {
+    const { prepared } = prepareTimeWindowIndex(
+      kind,
+      bounds,
+      acceptedAt,
+      [
+        {
+          acceptedAt,
+          packetId,
+          schemaId: packet.schemaId,
+          schemaVersion: packet.schemaVersion,
+          sha256: packet.digest,
+          byteLength: packet.bytes.byteLength,
+        },
+      ],
+      "write-packet",
+      config.maxReadBytes
+    );
+    await putImmutable(
+      config,
+      kind.kind,
+      `${kind.timeIndex!.prefix}/reservations/${packetId}.json`,
+      prepared,
+      config.maxReadBytes,
+      "write-packet",
+      "time-window-index",
+      context
+    );
+    await ensurePacketTimeIndexEntry(
+      config,
+      kind,
+      bounds,
+      acceptedAt,
+      packetId,
+      packet,
+      observationCandidate,
+      context
+    );
+  } catch (error) {
+    const failure = asStorageFailure(
+      error, "write-packet", kind.kind, "time-window-index"
+    );
+    if (failure.code === "IMMUTABLE_CONFLICT") throw failure;
+    // Every provider failure can leave a durable identity/head reservation.
+    // Once an exact packet is confirmed, even capacity/corruption needs repair:
+    // a terminal diagnostic must never discharge that packet's outbox item.
+    if (packetExists || failure.code === "STORAGE_OPERATION_FAILED") {
+      fail(
+        failure.code,
+        "The accepted-time index is pending reconciliation.",
+        "write-packet",
+        {
+          kind: kind.kind,
+          recordType: "time-window-index",
+          retryable: true,
+          cause: error,
+        }
+      );
+    }
+    throw failure;
+  }
 }
 
 function parseStoredJson(

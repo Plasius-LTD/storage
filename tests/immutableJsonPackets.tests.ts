@@ -1794,6 +1794,167 @@ describe("processor coordination records", () => {
     expect(container.blobs.has(indexPath)).toBe(true);
   });
 
+  describe("pending-index outbox recovery", () => {
+    const acceptedAt = "2026-07-18T12:10:00.000Z";
+    const packetId = "packet_recovery";
+    const packetPath = `feedback/bugs/packets/${packetId}.json`;
+    const indexPath = "feedback-index/bugs/windows/2026/07/18/12.json";
+    const window = {
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+      maxItems: 10,
+      maxBytes: 64 * 1024,
+    } as const;
+
+    async function fixture(durable: boolean) {
+      const result = createIndexedStore();
+      if (durable) {
+        await result.store.writePacket("bug", packetId, indexedPacket(acceptedAt));
+        for (const path of [...result.container.blobs.keys()]) {
+          if (path.startsWith("feedback-index/")) result.container.blobs.delete(path);
+        }
+      }
+      result.container.operations.length = 0;
+      return result;
+    }
+
+    for (const durable of [false, true]) {
+      for (const phase of ["download", "upload"] as const) {
+        it.each([
+          [403, "AuthorizationPermissionMismatch"],
+          [404, "ContainerNotFound"],
+          [409, "InternalError"],
+          [503, "ServerBusy"],
+        ] as const)(`retains ${durable ? "a durable packet" : "a reservation"} after head ${phase} %i`, async (status, code) => {
+          const { store, container } = await fixture(durable);
+          const failHead = (path: string) => {
+            if (path === indexPath) throw storageFailure(status, code, "synthetic-private-index-detail");
+          };
+          if (phase === "download") container.onDownload = failHead;
+          else container.onUpload = failHead;
+          const error = await store.writePacket("bug", packetId, indexedPacket(acceptedAt))
+            .catch((caught: unknown) => caught);
+          expect(error).toMatchObject({
+            code: "STORAGE_OPERATION_FAILED",
+            diagnostic: { operation: "write-packet", recordType: "time-window-index", retryable: true },
+            cause: { redacted: true },
+          });
+          expect(inspect(error, { depth: 10 })).not.toContain("synthetic-private-index-detail");
+          expect(container.blobs.has(packetPath)).toBe(durable);
+          expect(container.blobs.has(indexPath)).toBe(false);
+          expect(container.operations.filter(op => op.type === phase && op.path === indexPath)).toHaveLength(1);
+          container.onDownload = undefined;
+          container.onUpload = undefined;
+          await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+            .resolves.toMatchObject({ replayed: durable });
+          await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+            .resolves.toMatchObject({ replayed: true });
+          expect((await store.readPacketTimeWindow("bug", window)).packets).toHaveLength(1);
+          expect(container.operations.some(op => op.type === "list")).toBe(false);
+        });
+      }
+    }
+
+    it("retains a durable packet when a CAS retry cannot read the head", async () => {
+      const { store, container } = await fixture(true);
+      let attempts = 0;
+      container.onUpload = path => {
+        if (path === indexPath) {
+          attempts += 1;
+          container.onDownload = target => {
+            if (target === indexPath) throw storageFailure(403, "AuthorizationFailure");
+          };
+          throw storageFailure(412, "ConditionNotMet");
+        }
+      };
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .rejects.toMatchObject({ code: "STORAGE_OPERATION_FAILED", diagnostic: { retryable: true } });
+      expect(attempts).toBe(1);
+      container.onDownload = undefined;
+      container.onUpload = undefined;
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .resolves.toMatchObject({ replayed: true });
+      expect((await store.readPacketTimeWindow("bug", window)).packets).toHaveLength(1);
+    });
+
+    it("retains a legacy durable packet through capacity remediation", async () => {
+      const { store, container } = await fixture(true);
+      await store.writePacket("bug", "packet_other", indexedPacket(acceptedAt));
+      const bounded = createIndexedStore(container, undefined, "hour", { maxManifestEntries: 1 }).store;
+      await expect(bounded.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .rejects.toMatchObject({ code: "LIMIT_EXCEEDED", diagnostic: { retryable: true } });
+      expect(container.blobs.has(packetPath)).toBe(true);
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .resolves.toMatchObject({ replayed: true });
+      expect((await store.readPacketTimeWindow("bug", window)).packets).toHaveLength(2);
+    });
+
+    it("retains a legacy durable packet until a corrupt head is reconciled", async () => {
+      const { store, container } = await fixture(true);
+      await store.writePacket("bug", "packet_other", indexedPacket(acceptedAt));
+      const head = container.blobs.get(indexPath)!;
+      container.blobs.set(indexPath, { ...head, contentType: "text/plain" });
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .rejects.toMatchObject({ code: "CORRUPT_RECORD", diagnostic: { retryable: true } });
+      container.blobs.set(indexPath, head);
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .resolves.toMatchObject({ replayed: true });
+      expect((await store.readPacketTimeWindow("bug", window)).packets).toHaveLength(2);
+    });
+
+    for (const phase of ["download", "upload"] as const) {
+      it.each(["ABORTED", "DEADLINE_EXCEEDED"] as const)(`repairs a durable packet after head ${phase} %s`, async code => {
+        const { store, container } = await fixture(true);
+        const controller = new AbortController();
+        const interrupt = (path: string) => {
+          if (path !== indexPath) return;
+          if (code === "ABORTED") controller.abort();
+          return new Promise<void>(() => undefined);
+        };
+        if (phase === "download") container.onDownload = interrupt;
+        else container.onUpload = interrupt;
+        await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt), {
+          signal: controller.signal, timeoutMs: 10,
+        })).rejects.toMatchObject({ code, diagnostic: { retryable: true } });
+        expect(container.blobs.has(packetPath)).toBe(true);
+        container.onDownload = undefined;
+        container.onUpload = undefined;
+        await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+          .resolves.toMatchObject({ replayed: true });
+        expect((await store.readPacketTimeWindow("bug", window)).packets).toHaveLength(1);
+      });
+    }
+
+    it.each(["identity", "head"] as const)("keeps a durable packet's genuine %s conflict terminal", async phase => {
+      const { store, container } = await fixture(true);
+      const conflicting = createIndexedStore();
+      await conflicting.store.writePacket("bug", packetId, indexedPacket(acceptedAt, { severity: 4 }));
+      const path = phase === "head" ? indexPath : `feedback-index/bugs/reservations/${packetId}.json`;
+      container.blobs.set(path, conflicting.container.blobs.get(path)!);
+      const before = container.blobs.get(packetPath)!;
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .rejects.toMatchObject({ code: "IMMUTABLE_CONFLICT", diagnostic: { retryable: false } });
+      expect(container.blobs.get(packetPath)).toEqual(before);
+      expect(container.blobs.get(path)).toEqual(conflicting.container.blobs.get(path));
+    });
+
+    it("keeps a genuine reservation identity conflict terminal", async () => {
+      const { store, container } = await fixture(false);
+      container.onUpload = path => {
+        if (path === indexPath) throw storageFailure(503, "ServerBusy");
+      };
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt)))
+        .rejects.toMatchObject({ diagnostic: { retryable: true } });
+      container.onUpload = undefined;
+      await expect(store.writePacket("bug", packetId, indexedPacket(acceptedAt, { severity: 4 })))
+        .rejects.toMatchObject({ code: "IMMUTABLE_CONFLICT", diagnostic: { retryable: false } });
+      expect(container.blobs.has(packetPath)).toBe(false);
+      expect(container.blobs.has(indexPath)).toBe(false);
+      await store.writePacket("bug", packetId, indexedPacket(acceptedAt));
+      expect((await store.readPacketTimeWindow("bug", window)).packets).toHaveLength(1);
+    });
+  });
+
   describe("accepted-time capacity reservations", () => {
     const acceptedAt = "2026-07-18T12:10:00.000Z";
     const indexPath = "feedback-index/bugs/windows/2026/07/18/12.json";
