@@ -15,7 +15,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
-  - (placeholder)
+  - Build standalone privacy coverage inputs automatically and make traversal-error
+    redaction tests deterministic across root, ordinary users, and isolated containers.
 
 - **Security**
   - (placeholder)

@@ -62,6 +62,14 @@ enforcement boundaries:
    below an excluded cache or tool directory. Policy tests export built-in Node
    coverage to LCOV and combine it with runtime-package coverage so all gate
    executables remain represented in the release evidence.
+6. Standalone privacy LCOV builds the generated package before invoking the real
+   installed-package verifier. This prerequisite is shared by combined coverage
+   and audit commands through npm lifecycle ordering, without recursively calling
+   coverage. A test-only preload injects traversal failure in verifier subprocesses
+   rather than relying on filesystem permissions that root can bypass. Hosted
+   pull-request CI executes the privacy suite in read-only, network-disabled
+   Linux containers as root and an unprivileged user. Production filesystem APIs,
+   policy rules and diagnostic assertions are unchanged.
 
 The policy and tests use Node.js built-ins only. CI executes the repository gate
 before dependency installation, then runs the policy tests and final package

@@ -80,6 +80,15 @@ describe("release workflow trust boundaries", () => {
     );
   });
 
+  it("builds standalone privacy LCOV inputs and verifies container privileges", () => {
+    expect(packageJson.scripts?.["pretest:privacy:lcov"]).toBe("npm run build");
+    expect(packageJson.scripts?.["test:privacy:lcov"]).not.toContain("test:coverage");
+    expect(ciWorkflow).toContain("name: Verify privacy portability in containers");
+    expect(ciWorkflow).toContain('for identity in "0:0" "1000:1000"');
+    expect(ciWorkflow).toContain("--network none --read-only");
+    expect(ciWorkflow).toContain('"$PWD:/workspace:ro"');
+  });
+
   it("keeps dependency code out of the OIDC mutation job", () => {
     const validationJob = cdWorkflow.slice(
       cdWorkflow.indexOf("\n  validate_and_pack:"),
