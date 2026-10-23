@@ -2292,6 +2292,7 @@ describe("processor coordination records", () => {
     const headPath = "feedback-index/bugs/windows/2026/07/18/12.json";
     const sensitiveDetail = "synthetic-private-route?sig=synthetic-credential";
     const operations = ["read", "list"] as const;
+    let providerAccessorCalls = 0;
     const ambiguousErrors = [
       ["statusCode-only", () => ({ statusCode: 404, message: sensitiveDetail })],
       ["status-only", () => ({ status: 404, message: sensitiveDetail })],
@@ -2300,6 +2301,14 @@ describe("processor coordination records", () => {
       ["concealed authorization", () => storageFailure(404, "AuthorizationFailure", sensitiveDetail)],
       ["generic not-found", () => storageFailure(404, "NotFound", sensitiveDetail)],
       ["contradictory provider status", () => storageFailure(503, "BlobNotFound", sensitiveDetail)],
+      ["malformed HTTP status", () => ({ code: "BlobNotFound", statusCode: "404", message: sensitiveDetail })],
+      ["conflicting HTTP status aliases", () => ({ code: "BlobNotFound", statusCode: 404, status: 503, message: sensitiveDetail })],
+      ["opaque HTTP status", () => Object.defineProperty({ code: "BlobNotFound" }, "statusCode", {
+        get: () => { providerAccessorCalls += 1; throw new Error(sensitiveDetail); },
+      })],
+      ["opaque provider code", () => Object.defineProperty({ statusCode: 404 }, "code", {
+        get: () => { providerAccessorCalls += 1; throw new Error(sensitiveDetail); },
+      })],
       ["adapter not-found", () => new ImmutableJsonPacketStorageError({
         code: "NOT_FOUND", message: sensitiveDetail, operation: "read-time-window", retryable: false,
       })],
@@ -2313,6 +2322,7 @@ describe("processor coordination records", () => {
 
       it.each(ambiguousErrors)(`${operation} fails closed for %s`, async (_label, createError) => {
         const { container, store } = createIndexedStore();
+        const accessorCallsBefore = providerAccessorCalls;
         const failHeadRead = (path: string) => {
           expect(path).toBe(headPath);
           throw createError();
@@ -2333,6 +2343,7 @@ describe("processor coordination records", () => {
         });
         expect(inspect(outcome.error)).not.toContain(sensitiveDetail);
         expect(JSON.stringify(outcome.error)).not.toContain(sensitiveDetail);
+        expect(providerAccessorCalls).toBe(accessorCallsBefore);
         expect(container.operations).toHaveLength(1);
       });
 

@@ -1649,8 +1649,12 @@ function storageToken(error: unknown): {
 }
 
 function isNotFound(error: unknown): boolean {
-  const { status, code } = storageToken(error);
-  return code === "BlobNotFound" && (status === undefined || status === 404);
+  if (!isRecord(error) || storageToken(error).code !== "BlobNotFound") return false;
+  // An opaque, malformed, or conflicting status is not an omitted status.
+  return ["statusCode", "status"].every((name) => {
+    const descriptor = Object.getOwnPropertyDescriptor(error, name);
+    return descriptor === undefined || ("value" in descriptor && descriptor.value === 404);
+  });
 }
 
 function isBlobConditionalConflict(error: unknown): boolean {
