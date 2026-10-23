@@ -282,10 +282,20 @@ Schema registration fails closed unless its PII audit is empty.
   fresh traversal when reconciling new or late packets and use immutable output
   manifests/checkpoint CAS—not the list cursor—as their correctness boundary.
 - A kind that configures `timeIndex` gains an append-only accepted-time head
-  for each exact UTC hour or day. `writePacket()` writes the immutable packet
-  first and returns success only after its safe index entry is visible. An
-  exact replay repairs a missing entry; hosts must keep an outbox and retry an
-  ambiguous failure because Blob cannot atomically commit the two records.
+  for each exact UTC hour or day. `writePacket()` first creates a payload-free,
+  immutable identity reservation at `<timeIndex.prefix>/reservations/<packetId>.json`,
+  then reserves item and encoded-byte capacity in the window head with bounded
+  CAS, and only then uploads the immutable packet. Identity reservations use
+  the existing index envelope with one entry and deterministic `observedAt`.
+  A full window therefore rejects a new packet before it becomes durable;
+  concurrent writers cannot consume another writer's reserved capacity.
+  Success guarantees both packet and head visibility. Exact replay repairs an
+  interrupted reservation or a missing head without duplicating entries.
+  Hosts must persist the exact payload, ID and accepted time in a durable outbox
+  **before** calling this API and keep it until the combined receipt succeeds.
+  Once reserved, an ID cannot be reused with a changed payload or accepted time,
+  even after a capacity rejection. Retry the same item after capacity remediation;
+  do not change its timestamp to move it to another window.
 - `readPacketTimeWindow()` reads one aligned head and every referenced packet,
   verifies both integrity boundaries, and returns one complete canonically
   ordered result or fails without partial output. `listPacketTimeWindows()`
@@ -296,6 +306,26 @@ Schema registration fails closed unless its PII audit is empty.
   properties and metadata are admitted only as bounded plain data descriptors;
   accessors and dependency traps are never invoked and fail with fixed redacted
   corruption errors.
+- A reserved head can temporarily reference a packet whose upload was interrupted.
+  Window reads fail with fixed retryable `STORAGE_OPERATION_FAILED` until the
+  caller's outbox replays the same write; they never omit the entry or return
+  a complete empty window. Resolving a reservation does not change its snapshot,
+  because no complete window could have been consumed while that entry was missing.
+  Do not checkpoint a head returned by `listPacketTimeWindows()` until its full
+  window read succeeds. Post-upload response ambiguity retains a retryable
+  diagnostic even if the provider reports a permanent-looking status.
+- Deploy the reservation protocol with indexed writers quiesced and reporting
+  disabled through the inherited `feedback.reporting.enabled` host flag; drain
+  old packet-first writers before restarting ingestion and retained outboxes.
+  Existing packets and heads remain readable and exact legacy replay is supported.
+  The library does not evaluate the product flag or introduce an entitlement.
+  Roll back by pausing indexed writes/materialisation and preserving outboxes,
+  rather than restoring packet-first writers. Monitor reserved-window failures
+  and outbox age using the existing fixed diagnostics. Include `reservations/`
+  in the host's index-prefix permissions and lifecycle policy; retain identity
+  reservations until packet/window retention and all replay obligations expire.
+  Do not delete active reservations to free capacity. Already-stranded legacy
+  packets need operator reconciliation; this change prevents new capacity stranding.
 - Window heads are capped at 10,000 entries (and may be reduced by the store's
   configured manifest-entry ceiling) in addition to encoded-byte and
   operation-deadline bounds.
@@ -343,6 +373,7 @@ available.
 For the full decision and protocol, see
 [ADR-0004](./docs/adrs/adr-0004-immutable-schema-backed-json-packet-storage.md),
 [ADR-0007](./docs/adrs/adr-0007-cas-time-window-packet-indexes.md),
+[ADR-0008](./docs/adrs/adr-0008-reserve-index-capacity-before-packets.md),
 [TDR-0002](./docs/tdrs/tdr-0002-immutable-json-packet-storage-protocol.md), and
 [SECURITY.md](./SECURITY.md).
 
