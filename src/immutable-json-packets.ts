@@ -2049,8 +2049,7 @@ async function downloadRecord(
   path: string,
   maxBytes: number,
   operation: ImmutableJsonPacketStorageOperation,
-  context: OperationContext,
-  requireExplicitAbsence = false
+  context: OperationContext
 ): Promise<DownloadedRecord> {
   let response: JsonPacketBlobDownloadResponsePort;
   try {
@@ -2061,7 +2060,7 @@ async function downloadRecord(
     );
   } catch (error) {
     if (error instanceof ImmutableJsonPacketStorageError) {
-      if (requireExplicitAbsence && error.code === "NOT_FOUND") {
+      if (error.code === "NOT_FOUND") {
         // An adapter's domain error does not prove that this exact Blob is absent.
         throw asStorageFailure(undefined, operation, kind);
       }
@@ -2267,8 +2266,7 @@ async function readTimeWindowIndexIfPresent(
       timeWindowPath(kind.timeIndex, bounds.windowStart),
       config.maxReadBytes,
       operation,
-      context,
-      true
+      context
     );
   } catch (error) {
     if (
@@ -2463,8 +2461,7 @@ async function reservePacketTimeIndexEntry(
       `${kind.prefix}/packets/${packetId}.json`,
       kind.maxPacketBytes,
       "write-packet",
-      context,
-      true
+      context
     );
     assertDownloadedRecord(
       existing,

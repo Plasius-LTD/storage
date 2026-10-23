@@ -479,6 +479,32 @@ describe("immutable schema-backed JSON packet storage", () => {
     });
   });
 
+  it.each(["packet", "checkpoint"] as const)(
+    "rejects adapter-domain absence for ordinary %s downloads",
+    async (record) => {
+      const { container, store } = createStore();
+      const sensitiveDetail = "synthetic-adapter-route?sig=synthetic-secret";
+      container.onDownload = () => {
+        throw new ImmutableJsonPacketStorageError({
+          code: "NOT_FOUND", message: sensitiveDetail,
+          operation: record === "packet" ? "read-packet" : "read-checkpoint", retryable: false,
+        });
+      };
+      const outcome = await (record === "packet"
+        ? store.readPacket("bug", "bug_01j1te5t000000000000000001")
+        : store.readCheckpoint("bug", "hourly-materializer")
+      ).then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      expect(outcome).toBeInstanceOf(ImmutableJsonPacketStorageError);
+      expect(outcome).toMatchObject({ code: "STORAGE_OPERATION_FAILED" });
+      expect(inspect(outcome)).not.toContain(sensitiveDetail);
+      expect(JSON.stringify(outcome)).not.toContain(sensitiveDetail);
+      expect(container.operations).toHaveLength(1);
+    }
+  );
+
   it("conditionally creates canonical schema-validated packets and exactly replays them", async () => {
     const { container, store } = createStore();
     const packetId = "bug_01j1te5t000000000000000001";
