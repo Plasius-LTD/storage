@@ -2286,6 +2286,92 @@ describe("processor coordination records", () => {
     ).toHaveLength(3);
   });
 
+  describe("accepted-time absence classification", () => {
+    const windowStart = "2026-07-18T12:00:00.000Z";
+    const windowEnd = "2026-07-18T13:00:00.000Z";
+    const headPath = "feedback-index/bugs/windows/2026/07/18/12.json";
+    const sensitiveDetail = "synthetic-private-route?sig=synthetic-credential";
+    const operations = ["read", "list"] as const;
+    const ambiguousErrors = [
+      ["statusCode-only", () => ({ statusCode: 404, message: sensitiveDetail })],
+      ["status-only", () => ({ status: 404, message: sensitiveDetail })],
+      ["missing container", () => storageFailure(404, "ContainerNotFound", sensitiveDetail)],
+      ["routing failure", () => storageFailure(404, "RouteNotFound", sensitiveDetail)],
+      ["concealed authorization", () => storageFailure(404, "AuthorizationFailure", sensitiveDetail)],
+      ["generic not-found", () => storageFailure(404, "NotFound", sensitiveDetail)],
+      ["contradictory provider status", () => storageFailure(503, "BlobNotFound", sensitiveDetail)],
+      ["adapter not-found", () => new ImmutableJsonPacketStorageError({
+        code: "NOT_FOUND", message: sensitiveDetail, operation: "read-time-window", retryable: false,
+      })],
+    ] as const;
+
+    for (const operation of operations) {
+      const invoke = (store: ReturnType<typeof createIndexedStore>["store"]) =>
+        operation === "read"
+          ? store.readPacketTimeWindow("bug", { windowStart, windowEnd, maxItems: 1, maxBytes: 64 * 1024 })
+          : store.listPacketTimeWindows("bug", { windowStart, windowEnd, partition: "hour", maxItems: 1, maxBytes: 64 * 1024 });
+
+      it.each(ambiguousErrors)(`${operation} fails closed for %s`, async (_label, createError) => {
+        const { container, store } = createIndexedStore();
+        const failHeadRead = (path: string) => {
+          expect(path).toBe(headPath);
+          throw createError();
+        };
+        if (operation === "read") container.onDownload = failHeadRead;
+        else container.onProperties = failHeadRead;
+        const outcome = await invoke(store).then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error })
+        );
+        expect(outcome).not.toHaveProperty("result");
+        expect(outcome).toHaveProperty("error");
+        if (!("error" in outcome)) throw new Error("expected a rejected window");
+        expect(outcome.error).toBeInstanceOf(ImmutableJsonPacketStorageError);
+        expect(outcome.error).toMatchObject({
+          code: "STORAGE_OPERATION_FAILED",
+          diagnostic: { operation: operation === "read" ? "read-time-window" : "list-time-windows" },
+        });
+        expect(inspect(outcome.error)).not.toContain(sensitiveDetail);
+        expect(JSON.stringify(outcome.error)).not.toContain(sensitiveDetail);
+        expect(container.operations).toHaveLength(1);
+      });
+
+      it(`${operation} preserves typed deadline failures`, async () => {
+        const { container, store } = createIndexedStore();
+        const failure = new ImmutableJsonPacketStorageError({
+          code: "DEADLINE_EXCEEDED", message: "The operation deadline expired.",
+          operation: operation === "read" ? "read-time-window" : "list-time-windows",
+          retryable: true,
+        });
+        const failHeadRead = () => { throw failure; };
+        if (operation === "read") container.onDownload = failHeadRead;
+        else container.onProperties = failHeadRead;
+        await expect(invoke(store)).rejects.toBe(failure);
+        expect(container.operations).toHaveLength(1);
+      });
+
+      it.each([
+        { statusCode: 404, code: "BlobNotFound" },
+        { status: 404, code: "BlobNotFound" },
+        { code: "BlobNotFound" },
+      ])(`${operation} accepts explicit exact-head BlobNotFound %j`, async (token) => {
+        const { container, store } = createIndexedStore();
+        const failHeadRead = (path: string) => {
+          expect(path).toBe(headPath);
+          throw Object.assign(new Error(sensitiveDetail), token);
+        };
+        if (operation === "read") container.onDownload = failHeadRead;
+        else container.onProperties = failHeadRead;
+        const result = await invoke(store);
+        expect(result).toMatchObject(operation === "read"
+          ? { complete: true, packets: [], byteLength: 0, observedAt: windowStart }
+          : { complete: true, windows: [] });
+        expect(inspect(result)).not.toContain(sensitiveDetail);
+        expect(container.operations).toHaveLength(1);
+      });
+    }
+  });
+
   it("rejects malformed exact-properties responses without invoking or leaking accessors", async () => {
     const { container, store } = createIndexedStore();
     await store.writePacket(

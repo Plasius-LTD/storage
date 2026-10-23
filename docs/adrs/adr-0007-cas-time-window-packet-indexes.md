@@ -3,6 +3,7 @@
 - Date: 2026-08-27
 - Status: Accepted
 - Tracked work: [Storage Task #51](https://github.com/Plasius-LTD/storage/issues/51)
+- Error-contract clarification: [Storage Task #56](https://github.com/Plasius-LTD/storage/issues/56), 2026-10-23.
 - The packet-first write order and its rejected index-first alternative are
   superseded by [ADR-0008](./adr-0008-reserve-index-capacity-before-packets.md).
   The remaining index schema, bounds, integrity and ownership decisions remain.
@@ -63,7 +64,15 @@ reads the single fixed head, verifies canonical bytes and complete integrity
 metadata, then reads and validates every referenced packet. It returns the
 complete set exactly once in canonical order or fails without partial output.
 Caller item/byte limits may only reduce configured ceilings. A missing head is
-a complete empty window with a deterministic empty snapshot.
+a complete empty window with a deterministic empty snapshot only when that
+exact head request supplies a plain-data provider `code: "BlobNotFound"`, with
+HTTP 404 or no status. A status-only 404, container/route/authorization error,
+contradictory non-404 status, or adapter-domain `NOT_FOUND` cannot prove absence.
+Both head downloads and discovery properties reject these failures with fixed
+redacted storage diagnostics; no partial complete result can escape. Generic
+record downloads use the same explicit provider-code classifier. This preserves
+Azure SDK errors (`statusCode`) and equivalent adapters (`status` or code-only)
+without reading provider URLs, messages, headers, or accessor properties.
 
 `listPacketTimeWindows()` derives the finite set of aligned head paths for a
 bounded caller range and reads properties for only those paths. It never calls
@@ -92,6 +101,10 @@ which windows require reprocessing when their snapshot changes.
 - Writing the index before the packet: readers could observe a dangling entry.
 - Returning partial pages or resumable tokens: a processor could persist an
   incomplete window as complete.
+- Treating any HTTP 404 or domain `NOT_FOUND` as an absent head: missing
+  infrastructure or concealed authorization would become a false snapshot.
+- Inspecting provider error text/URLs: those are sensitive and cannot establish
+  absence more reliably than the exact operation's structured provider code.
 
 ## Consequences
 

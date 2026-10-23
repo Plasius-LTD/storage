@@ -1650,7 +1650,7 @@ function storageToken(error: unknown): {
 
 function isNotFound(error: unknown): boolean {
   const { status, code } = storageToken(error);
-  return code === "BlobNotFound" || (status === 404 && code !== "ContainerNotFound");
+  return code === "BlobNotFound" && (status === undefined || status === 404);
 }
 
 function isBlobConditionalConflict(error: unknown): boolean {
@@ -2056,13 +2056,14 @@ async function downloadRecord(
         .download(0, undefined, { abortSignal: context.signal })
     );
   } catch (error) {
-    if (error instanceof ImmutableJsonPacketStorageError) throw error;
-    const token = storageToken(error);
-    if (
-      isNotFound(error) &&
-      (!requireExplicitAbsence ||
-        (token.status === 404 && token.code === "BlobNotFound"))
-    ) {
+    if (error instanceof ImmutableJsonPacketStorageError) {
+      if (requireExplicitAbsence && error.code === "NOT_FOUND") {
+        // An adapter's domain error does not prove that this exact Blob is absent.
+        throw asStorageFailure(undefined, operation, kind);
+      }
+      throw error;
+    }
+    if (isNotFound(error)) {
       fail("NOT_FOUND", "The requested JSON record was not found.", operation, {
         kind,
       });
@@ -2262,7 +2263,8 @@ async function readTimeWindowIndexIfPresent(
       timeWindowPath(kind.timeIndex, bounds.windowStart),
       config.maxReadBytes,
       operation,
-      context
+      context,
+      true
     );
   } catch (error) {
     if (
@@ -2959,7 +2961,17 @@ async function readTimeWindowPropertiesIfPresent(
       getProperties({ abortSignal: context.signal })
     );
   } catch (error) {
-    if (error instanceof ImmutableJsonPacketStorageError) throw error;
+    if (error instanceof ImmutableJsonPacketStorageError) {
+      if (error.code === "NOT_FOUND") {
+        throw asStorageFailure(
+          undefined,
+          "list-time-windows",
+          kind.kind,
+          "time-window-index"
+        );
+      }
+      throw error;
+    }
     if (isNotFound(error)) return undefined;
     throw asStorageFailure(
       error,
