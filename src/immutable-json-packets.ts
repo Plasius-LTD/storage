@@ -1627,34 +1627,42 @@ function storageToken(error: unknown): {
   readonly status?: number;
   readonly code?: string;
 } {
-  if (!isRecord(error)) return {};
-  const statusDescriptor =
-    Object.getOwnPropertyDescriptor(error, "statusCode") ??
-    Object.getOwnPropertyDescriptor(error, "status");
-  const codeDescriptor = Object.getOwnPropertyDescriptor(error, "code");
-  const status =
-    statusDescriptor && "value" in statusDescriptor &&
-    typeof statusDescriptor.value === "number"
-      ? statusDescriptor.value
-      : undefined;
-  const code =
-    codeDescriptor && "value" in codeDescriptor &&
-    typeof codeDescriptor.value === "string"
-      ? codeDescriptor.value
-      : undefined;
-  return {
-    ...(status === undefined ? {} : { status }),
-    ...(code === undefined ? {} : { code }),
-  };
+  try {
+    if (!isRecord(error)) return {};
+    const statusDescriptor =
+      Object.getOwnPropertyDescriptor(error, "statusCode") ??
+      Object.getOwnPropertyDescriptor(error, "status");
+    const codeDescriptor = Object.getOwnPropertyDescriptor(error, "code");
+    const status =
+      statusDescriptor && "value" in statusDescriptor &&
+      typeof statusDescriptor.value === "number"
+        ? statusDescriptor.value
+        : undefined;
+    const code =
+      codeDescriptor && "value" in codeDescriptor &&
+      typeof codeDescriptor.value === "string"
+        ? codeDescriptor.value
+        : undefined;
+    return {
+      ...(status === undefined ? {} : { status }),
+      ...(code === undefined ? {} : { code }),
+    };
+  } catch {
+    return {};
+  }
 }
 
 function isNotFound(error: unknown): boolean {
-  if (!isRecord(error) || storageToken(error).code !== "BlobNotFound") return false;
-  // An opaque, malformed, or conflicting status is not an omitted status.
-  return ["statusCode", "status"].every((name) => {
-    const descriptor = Object.getOwnPropertyDescriptor(error, name);
-    return descriptor === undefined || ("value" in descriptor && descriptor.value === 404);
-  });
+  try {
+    if (!isRecord(error) || storageToken(error).code !== "BlobNotFound") return false;
+    // An opaque, malformed, or conflicting status is not an omitted status.
+    return ["statusCode", "status"].every((name) => {
+      const descriptor = Object.getOwnPropertyDescriptor(error, name);
+      return descriptor === undefined || ("value" in descriptor && descriptor.value === 404);
+    });
+  } catch {
+    return false;
+  }
 }
 
 function isBlobConditionalConflict(error: unknown): boolean {
@@ -1725,13 +1733,21 @@ function assertProviderLeaseToken(
   }
 }
 
+function isStorageError(error: unknown): error is ImmutableJsonPacketStorageError {
+  try {
+    return error instanceof ImmutableJsonPacketStorageError;
+  } catch {
+    return false;
+  }
+}
+
 function asStorageFailure(
   error: unknown,
   operation: ImmutableJsonPacketStorageOperation,
   kind: string,
   recordType?: ImmutableJsonPacketStorageDiagnostic["recordType"]
 ): ImmutableJsonPacketStorageError {
-  if (error instanceof ImmutableJsonPacketStorageError) return error;
+  if (isStorageError(error)) return error;
   const { status } = storageToken(error);
   return new ImmutableJsonPacketStorageError(
     {
@@ -2059,7 +2075,7 @@ async function downloadRecord(
         .download(0, undefined, { abortSignal: context.signal })
     );
   } catch (error) {
-    if (error instanceof ImmutableJsonPacketStorageError) {
+    if (isStorageError(error)) {
       if (error.code === "NOT_FOUND") {
         // An adapter's domain error does not prove that this exact Blob is absent.
         throw asStorageFailure(undefined, operation, kind);
@@ -2133,7 +2149,7 @@ async function downloadRecord(
         })()
       );
     } catch (error) {
-      if (error instanceof ImmutableJsonPacketStorageError) throw error;
+      if (isStorageError(error)) throw error;
       throw asStorageFailure(error, operation, kind);
     }
   }
@@ -2962,7 +2978,7 @@ async function readTimeWindowPropertiesIfPresent(
       getProperties({ abortSignal: context.signal })
     );
   } catch (error) {
-    if (error instanceof ImmutableJsonPacketStorageError) {
+    if (isStorageError(error)) {
       if (error.code === "NOT_FOUND") {
         throw asStorageFailure(
           undefined,

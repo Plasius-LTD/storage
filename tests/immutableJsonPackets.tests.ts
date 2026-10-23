@@ -2335,6 +2335,20 @@ describe("processor coordination records", () => {
       ["opaque provider code", () => Object.defineProperty({ statusCode: 404 }, "code", {
         get: () => { providerAccessorCalls += 1; throw new Error(sensitiveDetail); },
       })],
+      ...(["statusCode", "status", "code"] as const).map((trappedField) => [
+        `${trappedField} descriptor trap`,
+        () => new Proxy({ statusCode: 404, code: "BlobNotFound" }, {
+          getOwnPropertyDescriptor: (target, name) => {
+            if (name === trappedField) throw new Error(sensitiveDetail);
+            return Reflect.getOwnPropertyDescriptor(target, name);
+          },
+        }),
+      ] as const),
+      ["revoked provider proxy", () => {
+        const { proxy, revoke } = Proxy.revocable({}, {});
+        revoke();
+        return proxy;
+      }],
       ["adapter not-found", () => new ImmutableJsonPacketStorageError({
         code: "NOT_FOUND", message: sensitiveDetail, operation: "read-time-window", retryable: false,
       })],

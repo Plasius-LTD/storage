@@ -311,6 +311,8 @@ Schema registration fails closed unless its PII audit is empty.
   authorization-shaped 404, contradictory non-404 status, and adapter-domain
   `NOT_FOUND` are failures, never complete empty snapshots. Injected adapters must
   preserve that provider code rather than translating every HTTP 404 to absence.
+  Exceptions during error inspection (including proxy descriptor traps) also
+  fail closed with redacted diagnostics.
   Packet/record downloads also require explicit `BlobNotFound` before reporting
   `NOT_FOUND`; provider error messages, paths and credentials remain redacted.
 - A reserved head can temporarily reference a packet whose upload was interrupted.

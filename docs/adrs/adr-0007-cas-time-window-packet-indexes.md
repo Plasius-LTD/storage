@@ -73,6 +73,9 @@ redacted storage diagnostics; no partial complete result can escape. Generic
 record downloads use the same explicit provider-code classifier. This preserves
 Azure SDK errors (`statusCode`) and equivalent adapters (`status` or code-only)
 without reading provider URLs, messages, headers, or accessor properties.
+Error descriptor-inspection exceptions and revoked proxies are ambiguous
+failures; safe reflection and error classification must never release their
+raw exception text. This applies to both head APIs and shared record reads.
 
 `listPacketTimeWindows()` derives the finite set of aligned head paths for a
 bounded caller range and reads properties for only those paths. It never calls
