@@ -354,6 +354,15 @@ Schema registration fails closed unless its PII audit is empty.
 - Window heads are capped at 10,000 entries (and may be reduced by the store's
   configured manifest-entry ceiling) in addition to encoded-byte and
   operation-deadline bounds.
+- `readPacketTimeWindow()` verifies at most eight packets concurrently per call,
+  preserving canonical `(acceptedAt, packetId)` order even when downloads finish
+  out of order. Item and declared-byte limits are checked before packet I/O.
+  The first failure stops queued reads, aborts active siblings, and returns no
+  partial snapshot. Caller cancellation and the operation deadline propagate
+  through the same signal; adapters should honour it for resource cleanup.
+  The package stops waiting even if an adapter ignores cancellation. The host
+  owns aggregate admission across simultaneous calls. See
+  [ADR-0009](./docs/adrs/adr-0009-bounded-time-window-packet-verification.md).
 - Index heads contain only server acceptance time, safe packet ID, registered
   schema identity, digest, and byte length. They contain no packet payload,
   narrative, reporter correlation, request/browser facts, URL, or provider

@@ -22,6 +22,7 @@ const MAX_JSON_STRING_BYTES = 1_024;
 const MAX_STREAM_CHUNKS = 65_536;
 const MAX_TIME_INDEX_CAS_ATTEMPTS = 8;
 const MAX_TIME_WINDOW_INDEX_ENTRIES = 10_000;
+const TIME_WINDOW_PACKET_READ_CONCURRENCY = 8;
 
 type JsonPrimitive = string | number | boolean | null;
 export type SafeJsonValue =
@@ -1820,13 +1821,14 @@ async function withContext<T>(
       if (controller.signal.aborted) throw interruption();
     },
     race: async <R>(promise: Promise<R>): Promise<R> => {
+      // A provider may synchronously abort before returning a rejected promise.
+      void promise.catch(() => undefined);
       if (controller.signal.aborted) throw interruption();
       let listener: (() => void) | undefined;
       const aborted = new Promise<never>((_resolve, reject) => {
         listener = () => reject(interruption());
         controller.signal.addEventListener("abort", listener, { once: true });
       });
-      void promise.catch(() => undefined);
       try {
         return await Promise.race([promise, aborted]);
       } finally {
@@ -1838,6 +1840,10 @@ async function withContext<T>(
   try {
     context.throwIfAborted();
     return await work(context);
+  } catch (error) {
+    // Cancel sibling reads before removing the operation deadline/abort hooks.
+    controller.abort();
+    throw error;
   } finally {
     clearTimeout(timer);
     externalSignal?.removeEventListener("abort", onExternalAbort);
@@ -3590,55 +3596,74 @@ export function createImmutableJsonPacketStore<
             }
             byteLength += entry.byteLength;
           }
-          const packets: ImmutableJsonPacketTimeWindowEntry[] = [];
-          for (const entry of stored.index.entries) {
-            context.throwIfAborted();
-            const verified = await readVerifiedPacket(
-              config,
-              kind,
-              entry.packetId,
-              "read-time-window",
-              context
-            ).catch((error: unknown) => {
-              if (
-                error instanceof ImmutableJsonPacketStorageError &&
-                error.code === "NOT_FOUND"
-              ) {
-                fail(
-                  "STORAGE_OPERATION_FAILED",
-                  "An accepted-time reservation is not yet complete.",
+          const entries = stored.index.entries;
+          const packets = new Array<ImmutableJsonPacketTimeWindowEntry>(entries.length);
+          let nextIndex = 0;
+          let failed = false;
+          const worker = async () => {
+            try {
+              while (!failed && nextIndex < entries.length) {
+                context.throwIfAborted();
+                const index = nextIndex++;
+                const entry = entries[index] as TimeWindowIndexEntry;
+                const verified = await readVerifiedPacket(
+                  config,
+                  kind,
+                  entry.packetId,
                   "read-time-window",
-                  {
-                    kind: kind.kind,
-                    recordType: "time-window-index",
-                    retryable: true,
+                  context
+                ).catch((error: unknown) => {
+                  if (
+                    error instanceof ImmutableJsonPacketStorageError &&
+                    error.code === "NOT_FOUND"
+                  ) {
+                    fail(
+                      "STORAGE_OPERATION_FAILED",
+                      "An accepted-time reservation is not yet complete.",
+                      "read-time-window",
+                      {
+                        kind: kind.kind,
+                        recordType: "time-window-index",
+                        retryable: true,
+                      }
+                    );
                   }
-                );
+                  throw error;
+                });
+                const packetAcceptedAt = isRecord(verified.packet)
+                  ? verified.packet[timeIndex.timestampField]
+                  : undefined;
+                if (
+                  verified.sha256 !== entry.sha256 ||
+                  verified.byteLength !== entry.byteLength ||
+                  packetAcceptedAt !== entry.acceptedAt
+                ) {
+                  fail(
+                    "CORRUPT_RECORD",
+                    "An accepted-time entry does not match its immutable packet.",
+                    "read-time-window",
+                    { kind: kind.kind, recordType: "time-window-index" }
+                  );
+                }
+                context.throwIfAborted();
+                packets[index] = Object.freeze({
+                  ...entry,
+                  packet: verified.packet,
+                });
               }
+            } catch (error) {
+              failed = true;
               throw error;
-            });
-            const packetAcceptedAt = isRecord(verified.packet)
-              ? verified.packet[timeIndex.timestampField]
-              : undefined;
-            if (
-              verified.sha256 !== entry.sha256 ||
-              verified.byteLength !== entry.byteLength ||
-              packetAcceptedAt !== entry.acceptedAt
-            ) {
-              fail(
-                "CORRUPT_RECORD",
-                "An accepted-time entry does not match its immutable packet.",
-                "read-time-window",
-                { kind: kind.kind, recordType: "time-window-index" }
-              );
             }
-            packets.push(
-              Object.freeze({
-                ...entry,
-                packet: verified.packet,
-              })
-            );
-          }
+          };
+          // Allocate promises only for the fixed worker set, never per entry.
+          await Promise.all(
+            Array.from(
+              { length: Math.min(TIME_WINDOW_PACKET_READ_CONCURRENCY, entries.length) },
+              () => worker()
+            )
+          );
+          context.throwIfAborted();
           return Object.freeze({
             kind: kind.kind,
             windowStart: bounds.windowStart,

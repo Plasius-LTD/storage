@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { inspect } from "node:util";
 import type { ContainerClient as AzureBlobContainerClient } from "@azure/storage-blob";
 import { createSchema, field, validateUUID } from "@plasius/schema";
@@ -2327,6 +2328,215 @@ describe("processor coordination records", () => {
       expect(
         container.operations.some((operation) => operation.type === "list"),
       ).toBe(false);
+    });
+  });
+
+
+  describe("bounded accepted-time packet reads", () => {
+    const window = {
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+    } as const;
+    const options = { ...window, maxItems: 10_000, maxBytes: 16 * 1024 * 1024 };
+    const headPath = "feedback-index/bugs/windows/2026/07/18/12.json";
+    const packetPath = (index: number) =>
+      `feedback/bugs/packets/packet_${String(index).padStart(5, "0")}.json`;
+    const encode = (value: unknown): Uint8Array => {
+      const sort = (input: unknown): unknown => {
+        if (Array.isArray(input)) return input.map(sort);
+        if (typeof input !== "object" || input === null) return input;
+        return Object.fromEntries(Object.entries(input).sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0).map(([key, child]) => [key, sort(child)]));
+      };
+      return new TextEncoder().encode(`${JSON.stringify(sort(value))}\n`);
+    };
+    const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+    // Seed a real writer-produced envelope, then expand a synthetic valid head
+    // directly: exercising 10,000 reads must not require quadratic CAS writes.
+    async function fixture(count: number) {
+      const { container, store } = createIndexedStore(
+        new MemoryJsonBlobContainer(), undefined, "hour",
+        { maxManifestEntries: 10_000, maxReadBytes: 16 * 1024 * 1024 },
+      );
+      await store.writePacket("bug", "packet_00000", indexedPacket("2026-07-18T12:01:00.000Z"));
+      const template = container.blobs.get(packetPath(0))!;
+      const head = container.blobs.get(headPath)!;
+      const index = JSON.parse(new TextDecoder().decode(head.bytes));
+      const envelope = JSON.parse(new TextDecoder().decode(template.bytes));
+      index.entries = Array.from({ length: count }, (_, position) => {
+        const packetId = `packet_${String(position).padStart(5, "0")}`;
+        // Deliberate timestamp ties exercise the packetId secondary ordering.
+        const acceptedAt = new Date(Date.parse(window.windowStart) + Math.floor(position / 2) * 100).toISOString();
+        const bytes = encode({ ...envelope, recordId: packetId, payload: { ...envelope.payload, acceptedAt } });
+        const sha256 = digest(bytes);
+        container.blobs.set(packetPath(position), {
+          ...template, bytes, metadata: { ...template.metadata,
+            plasiusrecordid: packetId, plasiussha256: sha256,
+            plasiusbytelength: String(bytes.byteLength) },
+        });
+        return { ...index.entries[0], acceptedAt, packetId, sha256, byteLength: bytes.byteLength };
+      });
+      const saveHead = () => {
+        index.entryCount = index.entries.length;
+        index.snapshot = digest(encode({ kind: "bug", ...window, entries: index.entries }));
+        head.bytes = encode(index);
+        head.metadata = { ...head.metadata, plasiusentrycount: String(index.entryCount),
+          plasiussnapshot: index.snapshot, plasiussha256: digest(head.bytes),
+          plasiusbytelength: String(head.bytes.byteLength) };
+      };
+      saveHead();
+      container.operations.length = 0;
+      return { container, store, index, saveHead };
+    }
+
+    it.each([0, 1, 3, 24])("preserves canonical output with %i entries and out-of-order downloads", async (count) => {
+      const { container, store, index } = await fixture(count);
+      let active = 0;
+      let peak = 0;
+      const completed: string[] = [];
+      container.onDownload = async (path) => {
+        if (!path.includes("/packets/")) return;
+        active += 1;
+        peak = Math.max(peak, active);
+        const position = Number(path.match(/packet_(\d+)/)![1]);
+        await new Promise((resolve) => setTimeout(resolve, position % 8 === 0 ? 12 : 1));
+        completed.push(path);
+        active -= 1;
+      };
+      const result = await store.readPacketTimeWindow("bug", options);
+      expect(result.packets.map((entry) => entry.packetId)).toEqual(index.entries.map((entry: { packetId: string }) => entry.packetId));
+      expect(result.byteLength).toBe(index.entries.reduce((sum: number, entry: { byteLength: number }) => sum + entry.byteLength, 0));
+      expect(result).toMatchObject({ complete: true, observedAt: index.observedAt, snapshot: index.snapshot });
+      expect(Object.isFrozen(result.packets)).toBe(true);
+      expect(result.packets.every(Object.isFrozen)).toBe(true);
+      expect(peak).toBe(Math.min(8, count));
+      if (count > 8) expect(completed[0]).not.toBe(packetPath(0));
+      expect(active).toBe(0);
+      expect(container.operations.every((operation) => operation.type === "download")).toBe(true);
+    });
+
+    it("verifies 10,000 entries at 5 ms adapter latency within the default 30-second deadline", async () => {
+      const { container, store, index } = await fixture(10_000);
+      let active = 0;
+      let peak = 0;
+      container.onDownload = async (path) => {
+        if (!path.includes("/packets/")) return;
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+      };
+      const started = performance.now();
+      const result = await store.readPacketTimeWindow("bug", { ...options, timeoutMs: 30_000 });
+      expect(performance.now() - started).toBeLessThan(30_000);
+      expect(result.packets).toHaveLength(10_000);
+      expect(result.packets.map((entry) => entry.packetId)).toEqual(index.entries.map((entry: { packetId: string }) => entry.packetId));
+      expect(peak).toBe(8);
+      expect(active).toBe(0);
+      expect(container.operations).toHaveLength(10_001);
+    }, 40_000);
+
+    it.each([{ maxItems: 23 }, { maxBytes: 1 }])("rejects window limits before any packet I/O: %j", async (limits) => {
+      const { container, store } = await fixture(24);
+      await expect(store.readPacketTimeWindow("bug", { ...options, ...limits })).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+      expect(container.operations.map((operation) => operation.path)).toEqual([headPath]);
+    });
+
+    it.each(["abort", "timeout", "corrupt", "digest", "timestamp", "schema", "missing", "provider"] as const)(
+      "stops queued and active work on %s, even when sibling adapters ignore cancellation", async (failure) => {
+        const { container, store, index, saveHead } = await fixture(24);
+        const blob = container.blobs.get(packetPath(0))!;
+        if (["digest", "timestamp", "schema"].includes(failure)) {
+          const envelope = JSON.parse(new TextDecoder().decode(blob.bytes));
+          if (failure === "digest") envelope.payload.surfaceId = "synthetic-different-safe-value";
+          if (failure === "timestamp") envelope.payload.acceptedAt = "2026-07-18T12:59:00.000Z";
+          if (failure === "schema") envelope.payload.severity = "invalid";
+          blob.bytes = encode(envelope);
+          blob.metadata.plasiussha256 = digest(blob.bytes);
+          blob.metadata.plasiusbytelength = String(blob.bytes.byteLength);
+          // Keep digest/length consistent so timestamp/schema checks are reached.
+          if (failure !== "digest") {
+            index.entries[0].sha256 = blob.metadata.plasiussha256;
+            index.entries[0].byteLength = blob.bytes.byteLength;
+            saveHead();
+          }
+        }
+        if (failure === "corrupt") blob.metadata.plasiussha256 = "f".repeat(64);
+        if (failure === "missing") container.blobs.delete(packetPath(0));
+        const started: string[] = [];
+        const signals: AbortSignal[] = [];
+        const finishSiblings: Array<() => void> = [];
+        const delegate = container.getBlockBlobClient.bind(container);
+        let firstWave!: () => void;
+        const ready = new Promise<void>((resolve) => { firstWave = resolve; });
+        container.getBlockBlobClient = (path) => {
+          const client = delegate(path);
+          if (!path.includes("/packets/")) return client;
+          return { ...client, download: async (offset, count, options) => {
+            started.push(path);
+            signals.push(options!.abortSignal!);
+            if (started.length === 8) firstWave();
+            if (path !== packetPath(0) || failure === "abort" || failure === "timeout") {
+              return new Promise((resolve, reject) => {
+                finishSiblings.push(() => {
+                  // Late adapter success/failure must not resume queued work.
+                  if (started.indexOf(path) % 2 === 0) reject(new Error("synthetic-late-provider-failure"));
+                  else resolve(client.download(offset, count, options));
+                });
+              });
+            }
+            await ready;
+            if (failure === "provider") throw storageFailure(503, "synthetic-provider-error", "synthetic-private-route?sig=synthetic-secret");
+            return client.download(offset, count, options);
+          } };
+        };
+        const controller = new AbortController();
+        const pending = store.readPacketTimeWindow("bug", { ...options,
+          signal: controller.signal, timeoutMs: failure === "timeout" ? 100 : 1_000 });
+        const outcome = pending.then(() => ({ error: undefined }), (error: unknown) => ({ error }));
+        await ready;
+        if (failure === "abort") controller.abort();
+        const { error } = await outcome;
+        const expected = failure === "abort" ? "ABORTED" : failure === "timeout" ? "DEADLINE_EXCEEDED" :
+          failure === "schema" ? "SCHEMA_REJECTED" : ["missing", "provider"].includes(failure) ? "STORAGE_OPERATION_FAILED" : "CORRUPT_RECORD";
+        expect(error).toBeInstanceOf(ImmutableJsonPacketStorageError);
+        expect(error).toMatchObject({ code: expected, diagnostic: { operation: "read-time-window" } });
+        expect(JSON.stringify(error)).not.toContain("synthetic-secret");
+        expect(signals).toHaveLength(8);
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+        finishSiblings.forEach((finish) => finish());
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        expect(started).toHaveLength(8);
+        if (failure === "missing") expect(error).toMatchObject({ diagnostic: { retryable: true } });
+      },
+    );
+
+    it("observes provider rejections when a download synchronously triggers cancellation", async () => {
+      const { container, store } = await fixture(24);
+      const controller = new AbortController();
+      const delegate = container.getBlockBlobClient.bind(container);
+      let started = 0;
+      container.getBlockBlobClient = (path) => {
+        const client = delegate(path);
+        if (!path.includes("/packets/")) return client;
+        return { ...client, download: () => {
+          started += 1;
+          controller.abort();
+          return Promise.reject(new Error("synthetic-cancelled-provider"));
+        } };
+      };
+      await expect(store.readPacketTimeWindow("bug", { ...options, signal: controller.signal })).rejects.toMatchObject({ code: "ABORTED" });
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      expect(started).toBe(1);
+    });
+
+    it("does not issue I/O for an already-aborted window", async () => {
+      const { container, store } = await fixture(24);
+      const controller = new AbortController();
+      controller.abort();
+      await expect(store.readPacketTimeWindow("bug", { ...options, signal: controller.signal })).rejects.toMatchObject({ code: "ABORTED" });
+      expect(container.operations).toHaveLength(0);
     });
   });
 

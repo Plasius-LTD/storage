@@ -15,7 +15,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
-  - (placeholder)
+  - Verify accepted-time window packets with at most eight concurrent reads, preserving canonical output and fail-closed integrity while cancelling active siblings after failure.
 
 - **Security**
   - (placeholder)
