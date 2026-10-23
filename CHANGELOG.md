@@ -15,6 +15,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.3.11] - 2026-10-23
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
   - Verify accepted-time window packets with at most eight concurrent reads, preserving canonical output and fail-closed integrity while cancelling active siblings after failure.
 
 - **Security**
@@ -548,7 +562,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.10...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.11...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -593,3 +607,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.8]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.8
 [1.3.9]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.9
 [1.3.10]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.10
+[1.3.11]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.11
