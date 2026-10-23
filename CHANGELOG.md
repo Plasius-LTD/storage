@@ -15,6 +15,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.3.9] - 2026-10-23
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
   - Build standalone privacy coverage inputs automatically and make traversal-error
     redaction tests deterministic across root, ordinary users, and isolated containers.
 
@@ -519,7 +533,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.8...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.9...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -562,3 +576,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.6]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.6
 [1.3.7]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.7
 [1.3.8]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.8
+[1.3.9]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.9
