@@ -15,6 +15,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
+  - (placeholder)
+
+- **Security**
+  - (placeholder)
+
+## [1.3.6] - 2026-10-23
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
   - Reserve accepted-time index item/byte capacity with bounded CAS before packet
     creation, bind packet identities across windows, and make interrupted
     reservations recoverable through exact outbox replay without partial reads.
@@ -472,7 +486,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.5...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.6...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -512,3 +526,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.3]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.3
 [1.3.4]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.4
 [1.3.5]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.5
+[1.3.6]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.6
