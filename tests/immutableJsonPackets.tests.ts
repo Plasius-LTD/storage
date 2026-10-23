@@ -2349,6 +2349,23 @@ describe("processor coordination records", () => {
         revoke();
         return proxy;
       }],
+      ...(["NOT_FOUND", "DEADLINE_EXCEEDED"] as const).map((code) => [
+        `proxied domain ${code}`,
+        () => new Proxy(new ImmutableJsonPacketStorageError({
+          code, message: sensitiveDetail, operation: "read-time-window", retryable: false,
+        }), {
+          get: (target, name, receiver) => {
+            if (name === "code") throw new Error(sensitiveDetail);
+            return Reflect.get(target, name, receiver);
+          },
+        }),
+      ] as const),
+      ["accessor-backed domain code", () => Object.defineProperty(
+        new ImmutableJsonPacketStorageError({
+          code: "NOT_FOUND", message: sensitiveDetail, operation: "read-time-window", retryable: false,
+        }),
+        "code", { get: () => { throw new Error(sensitiveDetail); } }
+      )],
       ["adapter not-found", () => new ImmutableJsonPacketStorageError({
         code: "NOT_FOUND", message: sensitiveDetail, operation: "read-time-window", retryable: false,
       })],

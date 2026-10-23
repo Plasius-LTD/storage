@@ -76,6 +76,10 @@ without reading provider URLs, messages, headers, or accessor properties.
 Error descriptor-inspection exceptions and revoked proxies are ambiguous
 failures; safe reflection and error classification must never release their
 raw exception text. This applies to both head APIs and shared record reads.
+A proxied or accessor-backed domain error is also an untrusted provider failure,
+not a trusted package diagnostic. The Node-only subpath uses the built-in
+`node:util/types` proxy check before trusting a domain error's plain-data code;
+no runtime dependency or public signature changes are required.
 
 `listPacketTimeWindows()` derives the finite set of aligned head paths for a
 bounded caller range and reads properties for only those paths. It never calls

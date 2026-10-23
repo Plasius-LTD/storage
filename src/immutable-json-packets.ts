@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { isProxy } from "node:util/types";
 
 export const IMMUTABLE_JSON_PACKET_STORAGE_SCHEMA =
   "plasius.immutable-json-packet-storage/1" as const;
@@ -1735,7 +1736,9 @@ function assertProviderLeaseToken(
 
 function isStorageError(error: unknown): error is ImmutableJsonPacketStorageError {
   try {
-    return error instanceof ImmutableJsonPacketStorageError;
+    if (isProxy(error) || !(error instanceof ImmutableJsonPacketStorageError)) return false;
+    const code = Object.getOwnPropertyDescriptor(error, "code");
+    return code !== undefined && "value" in code && typeof code.value === "string";
   } catch {
     return false;
   }
