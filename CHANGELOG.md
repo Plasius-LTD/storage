@@ -15,7 +15,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Fixed**
-  - (placeholder)
+  - Accept qualified public contributor/CLA documents with hierarchical context
+    while retaining fail-closed private-record directories and path-only artifact gates.
 
 - **Security**
   - (placeholder)
