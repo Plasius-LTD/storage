@@ -11,6 +11,7 @@
     "test": "vitest run && npm run test:privacy",
     "test:watch": "vitest",
     "test:privacy": "node --experimental-test-coverage --test-coverage-include=scripts/private-artifact-policy.cjs --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=60 --test tests/private-artifact-policy.test.cjs",
+    "pretest:privacy:lcov": "npm run build",
     "test:privacy:lcov": "node -e \"require('node:fs').mkdirSync('coverage',{recursive:true})\" && node --experimental-test-coverage --test-coverage-include=scripts/private-artifact-policy.cjs --test-coverage-include=scripts/verify-private-artifacts.cjs --test-coverage-include=scripts/verify-public-artifacts.cjs --test-coverage-include=scripts/verify-public-package.cjs --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./tests/node-lcov-reporter.mjs --test-reporter-destination=coverage/private-artifacts.lcov --test tests/private-artifact-policy.test.cjs",
     "typecheck": "tsc --noEmit",
     "test:coverage": "vitest run --coverage",

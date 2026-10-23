@@ -458,8 +458,14 @@ classifier, including packages rooted below otherwise excluded tool/cache
 directories. CI runs the path and package gates, and release preparation and
 publishing fail closed when either policy fails. Node's built-in coverage is
 exported to LCOV and combined with package coverage so each executable policy
-boundary remains visible to review. These targeted controls are defense in
-depth; they do not replace organisation-wide secret scanning, access control,
+boundary remains visible to review. Standalone
+`npm run test:privacy:lcov` builds its generated package inputs first, including
+when called by combined coverage or audit commands. Traversal-failure tests
+inject a test-only filesystem error into verifier subprocesses, so root and
+ordinary users exercise identical redaction assertions. Pull-request CI also
+runs the privacy suite in isolated, network-disabled Linux containers as root
+and an unprivileged user with the repository mounted read-only. These targeted
+controls are defense in depth; they do not replace organisation-wide secret scanning, access control,
 or incident response.
 
 ## Governance

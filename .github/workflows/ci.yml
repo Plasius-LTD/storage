@@ -63,6 +63,27 @@ jobs:
       - name: Test private artifact policy
         run: npm run test:privacy
 
+      - name: Verify privacy portability in containers
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          IMAGE="node:$(cat .nvmrc)-bookworm"
+          docker pull "$IMAGE"
+          for identity in "0:0" "1000:1000"; do
+            docker run --rm --network none --read-only \
+              --tmpfs /tmp:rw,exec,nosuid,size=256m \
+              --user "$identity" --volume "$PWD:/workspace:ro" \
+              --env GIT_CONFIG_COUNT=1 \
+              --env GIT_CONFIG_KEY_0=safe.directory \
+              --env GIT_CONFIG_VALUE_0=/workspace \
+              --workdir /workspace "$IMAGE" \
+              node --experimental-test-coverage \
+                --test-coverage-include=scripts/private-artifact-policy.cjs \
+                --test-coverage-lines=80 --test-coverage-functions=80 \
+                --test-coverage-branches=60 \
+                --test tests/private-artifact-policy.test.cjs
+          done
+
       - name: Test with coverage
         run: |
           set -euo pipefail

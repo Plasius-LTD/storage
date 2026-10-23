@@ -917,24 +917,31 @@ test("working-tree discovery is path-only and skips dependency metadata", (t) =>
 });
 
 test("verifier entry points redact exceptional traversal paths and stacks", (t) => {
-  const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "private-artifact-traversal-")
-  );
+  const root = fs.realpathSync(createTemporaryDirectory(t));
   const protectedDirectory = path.join(
     root,
     "legal",
     "contributor-acceptances-SYNTHETIC-SENSITIVE"
   );
   fs.mkdirSync(protectedDirectory, { recursive: true });
-  fs.chmodSync(protectedDirectory, 0o000);
-  t.after(() => {
-    try {
-      fs.chmodSync(protectedDirectory, 0o700);
-    } catch {
-      // The temporary directory may already have been removed after a failure.
-    }
-    fs.rmSync(root, { recursive: true, force: true });
-  });
+  // A test-only preload makes the same traversal fail even when root can
+  // traverse mode-000 directories. Production filesystem APIs stay unchanged.
+  const preload = path.join(root, "deny-traversal.cjs");
+  fs.writeFileSync(
+    preload,
+    [
+      'const fs = require("node:fs");',
+      "const original = fs.readdirSync;",
+      "fs.readdirSync = function (candidate, ...args) {",
+      `  if (String(candidate) === ${JSON.stringify(protectedDirectory)}) {`,
+      '    const error = new Error("SYNTHETIC-SENSITIVE traversal denied");',
+      '    error.code = "EACCES";',
+      "    throw error;",
+      "  }",
+      "  return original.call(this, candidate, ...args);",
+      "};",
+    ].join("\n")
+  );
   execFileSync("git", ["init", "--quiet"], { cwd: root });
 
   const verifiers = [
@@ -958,7 +965,7 @@ test("verifier entry points redact exceptional traversal paths and stacks", (t) 
   ];
 
   for (const { args, cwd } of verifiers) {
-    const result = spawnSync(process.execPath, args, {
+    const result = spawnSync(process.execPath, ["--require", preload, ...args], {
       cwd,
       encoding: "utf8",
     });
