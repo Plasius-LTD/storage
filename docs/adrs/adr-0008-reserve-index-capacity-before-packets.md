@@ -30,6 +30,9 @@ Blob cannot transactionally create both packet and index head.
    count must fit configured limits before CAS. Losing writers reread;
    exhausted capacity creates no packet. Existing exact entries retain their
    reservation even when the window is otherwise full.
+   Identity and head uploads may commit before their response fails. All such
+   provider ambiguities are retryable, including permanent-looking statuses;
+   deterministic capacity or immutable-identity rejection remains terminal.
 4. Upload the immutable packet only after its head entry is reserved. Return
    a receipt only after successful creation or verified exact replay. Ambiguous
    post-upload failures retain retryability, including permanent-looking

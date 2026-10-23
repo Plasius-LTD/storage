@@ -2026,6 +2026,73 @@ describe("processor coordination records", () => {
       expect(container.blobs.size).toBe(0);
     });
 
+    it.each(["identity", "head"] as const)(
+      "repairs a committed %s reservation after a permanent-looking response failure",
+      async (phase) => {
+        const { store, container } = createIndexedStore();
+        const target =
+          phase === "head"
+            ? indexPath
+            : "feedback-index/bugs/reservations/packet_one.json";
+        container.onUploaded = (path) => {
+          if (path === target)
+            throw storageFailure(
+              403,
+              "AuthorizationFailure",
+              "synthetic-private-reservation-detail"
+            );
+        };
+        const error = await store
+          .writePacket("bug", "packet_one", indexedPacket(acceptedAt))
+          .catch((caught: unknown) => caught);
+        expect(error).toMatchObject({
+          code: "STORAGE_OPERATION_FAILED",
+          diagnostic: { retryable: true },
+          cause: { redacted: true },
+        });
+        expect(inspect(error, { depth: 10 })).not.toContain(
+          "synthetic-private-reservation-detail"
+        );
+        expect(container.blobs.has(target)).toBe(true);
+        expect(container.blobs.has("feedback/bugs/packets/packet_one.json")).toBe(
+          false
+        );
+        if (phase === "head") {
+          await expect(
+            store.readPacketTimeWindow("bug", window)
+          ).rejects.toMatchObject({
+            code: "STORAGE_OPERATION_FAILED",
+            diagnostic: { retryable: true },
+          });
+        }
+        container.onUploaded = undefined;
+        await expect(
+          store.writePacket("bug", "packet_one", indexedPacket(acceptedAt))
+        ).resolves.toMatchObject({ replayed: false });
+        await expect(
+          store.writePacket("bug", "packet_one", indexedPacket(acceptedAt))
+        ).resolves.toMatchObject({ replayed: true });
+        expect(
+          (await store.readPacketTimeWindow("bug", window)).packets
+        ).toHaveLength(1);
+      }
+    );
+    it("keeps a head commit retryable when an adapter throws a typed storage error", async () => {
+      const { store, container } = createIndexedStore();
+      container.onUploaded = path => {
+        if (path === indexPath) throw new ImmutableJsonPacketStorageError({
+          code: "STORAGE_OPERATION_FAILED", message: "Sanitized adapter failure.",
+          operation: "write-packet", retryable: false,
+        });
+      };
+      await expect(store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)))
+        .rejects.toMatchObject({ code: "STORAGE_OPERATION_FAILED", diagnostic: { retryable: true } });
+      expect(container.blobs.has(indexPath)).toBe(true);
+      container.onUploaded = undefined;
+      await store.writePacket("bug", "packet_one", indexedPacket(acceptedAt));
+      expect((await store.readPacketTimeWindow("bug", window)).packets).toHaveLength(1);
+    });
+
     it("retains the reservation across cancellation and repairs without changing its snapshot", async () => {
       const { store, container } = createIndexedStore();
       const controller = new AbortController();

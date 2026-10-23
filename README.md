@@ -314,6 +314,8 @@ Schema registration fails closed unless its PII audit is empty.
   Do not checkpoint a head returned by `listPacketTimeWindows()` until its full
   window read succeeds. Post-upload response ambiguity retains a retryable
   diagnostic even if the provider reports a permanent-looking status.
+  The same rule applies to identity-reservation and head-CAS upload responses:
+  an unconfirmed write may already be durable, so retain the outbox and replay.
 - Deploy the reservation protocol with indexed writers quiesced and reporting
   disabled through the inherited `feedback.reporting.enabled` host flag; drain
   old packet-first writers before restarting ingestion and retained outboxes.
