@@ -46,6 +46,38 @@ Head snapshots remain stable on repair: no successful complete read was possible
 before the missing packet became visible. Head discovery alone is never a
 materialisation checkpoint. No scan, global lock or unbounded retry is added.
 
+## Pending-index reconciliation (storage #57)
+
+[Task #57](https://github.com/Plasius-LTD/storage/issues/57) extends the phase
+classification across identity preparation, upload/replay and every head CAS
+read/write. A permanent-looking provider response during this phase cannot
+release the caller's outbox obligation: a reservation or packet may already
+exist. Provider errors use fixed redacted retryable `STORAGE_OPERATION_FAILED`
+diagnostics with `time-window-index` record type; general HTTP retry rules still
+apply outside indexed writes.
+
+When the initial exact-byte/metadata lookup confirms an existing durable packet,
+every later index failure except `IMMUTABLE_CONFLICT` remains retryable. Preserve
+capacity, corruption, abort and deadline codes so callers can distinguish the
+required remediation. A fixed pending-reconciliation message replaces dependency
+text. A missing packet still allows terminal deterministic capacity/corruption
+rejection before packet upload. Actual identity collisions remain terminal in
+both phases; no record is overwritten and no partial receipt is returned.
+
+Here retryability means retain and reconcile the exact outbox item. Configuration,
+capacity and corruption faults require remediation/operator escalation before a
+bounded caller retry; they do not justify rapid retries, index deletion, payload
+changes or an internal retry loop. This avoids a new queue or public error code,
+keeps the existing eight-attempt CAS/deadline/cancellation bounds, and adds no
+Blob calls. Abandoning confirmed durable packets on a terminal index diagnostic
+or treating every pre-packet validation failure as transient was rejected.
+
+Regression coverage includes legacy packet/head separation, 403/404/409/5xx
+head reads/uploads, CAS reread failure, exact replay repair, capacity/corruption
+remediation, cancellation/deadline, redaction and terminal identity conflicts.
+The Task uses the same host flag, rollout/rollback, NFR and approved patch-release
+qualification path below; it does not deploy or migrate site consumers.
+
 ## Alternatives
 
 - Packet-first preflight without reservation loses races and is rejected.
@@ -77,8 +109,9 @@ Keep reservations until packet/window retention and outstanding replay
 obligations expire together. Abandoned reservations require outbox/operator
 reconciliation, never blind deletion or TTL while a delayed write may complete.
 Previously stranded legacy packets are not automatically reconciled. Other
-partial-commit and accepted-time completeness follow-ups remain separately
-tracked; this Task does not close storage #56 or #57 or the reporting Feature.
+accepted-time completeness follow-ups remain separately tracked. Task #55
+alone did not close storage #56 or #57 or the reporting Feature; Task #57's
+phase classification is documented above and requires its own release evidence.
 
 ## Validation and release
 

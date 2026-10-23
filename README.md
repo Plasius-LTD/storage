@@ -325,6 +325,20 @@ Schema registration fails closed unless its PII audit is empty.
   diagnostic even if the provider reports a permanent-looking status.
   The same rule applies to identity-reservation and head-CAS upload responses:
   an unconfirmed write may already be durable, so retain the outbox and replay.
+- While an index is pending, provider failures during identity/head reads or
+  writes stay retryable even for 403/404/409 responses. Conditional head races
+  remain bounded to eight CAS attempts. Once an exact durable packet has been
+  verified, subsequent index capacity/corruption failures also retain
+  `retryable: true`, with their fixed error code and `time-window-index` record
+  type. Retain the exact outbox item until replay returns the combined receipt;
+  repair permissions, provider availability, capacity or corrupt index state
+  before retrying those failures. Retryability preserves the reconciliation
+  obligation; it does not request an immediate retry or permit dropping,
+  replacing or blindly overwriting records. The caller owns bounded backoff,
+  alerts and operator escalation. Genuine immutable identity conflicts remain
+  terminal, and a new packet still fails terminally when capacity is exhausted
+  before packet creation. Non-indexed storage operations keep their existing
+  HTTP retry classification.
 - Deploy the reservation protocol with indexed writers quiesced and reporting
   disabled through the inherited `feedback.reporting.enabled` host flag; drain
   old packet-first writers before restarting ingestion and retained outboxes.
