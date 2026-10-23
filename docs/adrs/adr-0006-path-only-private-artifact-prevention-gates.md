@@ -44,7 +44,12 @@ enforcement boundaries:
    POSIX separators, and the optional npm `package/` prefix reduce to one
    representation. Explicit process, template, policy, schema, and validator
    files with compact or separated numeric wrappers remain public, but a
-   matching component used as a directory fails closed. A separate
+   matching component used as a directory fails closed. Terminal qualifiers may
+   complete a protected family whose markers are split across an otherwise
+   incomplete ancestor context (`docs/contributor/acceptance-process.md`). The
+   exemption is refused when ancestor markers already form the protected family
+   (`docs/contributor/acceptances/process.md`). Registry rules remain non-exempt;
+   normalization and the exact package allowlist remain independent. A separate
    classification copy removes Windows-ignored trailing dots and spaces from
    every component and structurally normalizes the result; raw package-member
    identity remains unchanged for exact allowlist and collision enforcement.

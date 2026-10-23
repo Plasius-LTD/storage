@@ -600,13 +600,15 @@ function matchesSemanticFamily(
   }
   if (
     publicRelevantMask === 0 ||
-    semanticPath.publicDocument === undefined ||
-    !predicate(semanticPath.publicDocument.mask)
+    semanticPath.publicDocument === undefined
   ) {
     return true;
   }
 
-  return (semanticPath.nonTerminalMask & publicRelevantMask) !== 0;
+  // A qualified terminal document may complete a family split across folders.
+  // Ancestors that already identify record storage cannot be made public by
+  // appending a process/template/schema/validator filename.
+  return predicate(semanticPath.nonTerminalMask & publicRelevantMask);
 }
 
 function matchesContributorRecordMask(mask) {

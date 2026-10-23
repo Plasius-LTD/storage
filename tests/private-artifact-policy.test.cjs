@@ -709,6 +709,136 @@ test("allows public CLA templates, contributor documentation, and benign technic
   );
 });
 
+test("allows terminal public qualifiers to complete hierarchical record context", () => {
+  const publicPaths = [
+    "docs/contributor/acceptance-process.md",
+    "docs/contributor/acceptanceProcessVersion2.md",
+    "docs/contributors/signed-agreement-template.md",
+    "src/contributor/signature-schema.ts",
+    "src/contributor/signatureSchemaV2.ts",
+    "src/contributor/submission-validator.ts",
+    "schemas/CLA/signature-schema.json",
+    "docs/CLA/signed-template.md",
+    "docs/signed/CLA-template.md",
+  ];
+  for (const candidate of publicPaths) {
+    for (const variant of [
+      candidate,
+      candidate.toUpperCase(),
+      candidate.replaceAll("/", "\\"),
+      candidate.replace(/[!-~]/gu, (character) =>
+        String.fromCharCode(character.charCodeAt(0) + 0xfee0)
+      ),
+    ]) {
+      assert.deepEqual(findPrivateArtifactViolations([variant]), [], variant);
+    }
+  }
+});
+
+test("keeps issue aliases and hierarchical private directories protected", () => {
+  const protectedPaths = [
+    ["contributoracceptances.json", "contributor-record-storage"],
+    ["contributoracceptances2026.json", "contributor-record-storage"],
+    ["legal/acceptances/contributors/2026.json", "contributor-record-storage"],
+    ["legal/agreements/signed/contributors/record.pdf", "contributor-record-storage"],
+    ["legal/CLA/signed/record.pdf", "signed-cla-storage"],
+    ["docs/contributor-acceptances/acceptance-process.md", "contributor-record-storage"],
+    ["docs/contributor/acceptances/process.md", "contributor-record-storage"],
+    ["docs/contributor/acceptance-process.md/record.pdf", "contributor-record-storage"],
+    ["docs/CLA/signed/template.md", "signed-cla-storage"],
+    ["docs/signed/CLA/template.md", "signed-cla-storage"],
+    ["docs/private/registry/process.md", "private-registry"],
+    ["docs/contributor/registry/schema.ts", "cla-contributor-registry"],
+  ];
+  for (const [candidate, ruleId] of protectedPaths) {
+    for (const variant of [
+      candidate,
+      candidate.toUpperCase(),
+      candidate.replaceAll("/", "\\"),
+      candidate.replace(/[!-~]/gu, (character) =>
+        String.fromCharCode(character.charCodeAt(0) + 0xfee0)
+      ),
+    ]) {
+      const violations = findPrivateArtifactViolations([variant]);
+      assert.equal(violations.length, 1, variant);
+      assert.equal(violations[0].ruleId, ruleId, variant);
+    }
+  }
+});
+
+test("source verifiers accept hierarchical public documents and reject record directories", (t) => {
+  const root = createTemporaryDirectory(t);
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  const publicPath = "docs/contributor/acceptanceProcessVersion2.md";
+  const privatePath = "docs/contributor/acceptances/process.md";
+  const makeEmpty = (candidate) => {
+    const target = path.join(root, candidate);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.closeSync(fs.openSync(target, "w"));
+  };
+  makeEmpty(publicPath);
+  execFileSync("git", ["add", "--", publicPath], { cwd: root });
+  const verifiers = [
+    [path.resolve(__dirname, "../scripts/verify-private-artifacts.cjs"), root],
+    [path.resolve(__dirname, "../scripts/verify-public-artifacts.cjs"), "--source-only"],
+  ];
+  for (const args of verifiers) {
+    const result = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  makeEmpty(privatePath);
+  execFileSync("git", ["add", "--", privatePath], { cwd: root });
+  fs.rmSync(path.join(root, privatePath));
+  for (const args of verifiers) {
+    const result = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /contributor-record-storage: 1/u);
+    assert.doesNotMatch(result.stderr, /docs\/|acceptances|\.md|\n\s*at\s/iu);
+  }
+});
+
+test("package and final-manifest gates reject aliases before candidate content access", (t) => {
+  const root = createTemporaryDirectory(t);
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
+  const preload = path.join(root, "inventory.cjs");
+  const verifiers = [
+    ["verify-public-artifacts.cjs", "private-artifact-policy-rejected"],
+    ["verify-public-package.cjs", "private-package-artifact-rejected"],
+  ];
+  for (const candidate of [
+    "contributoracceptances2026.json",
+    "legal/acceptances/contributors/2026.json",
+    "legal/agreements/signed/contributors/record.pdf",
+    "docs/contributor/acceptances/process.md",
+    "legal/ＣＬＡ/signed/record.pdf",
+  ]) {
+    // Inventories name nonexistent files: a successful rule-count rejection
+    // must therefore precede any read, copy, hash, or install of a candidate.
+    const inventory = JSON.stringify([{ files: [{ path: candidate }] }]);
+    fs.writeFileSync(preload, [
+      'const cp = require("node:child_process");',
+      "const originalExec = cp.execFileSync;",
+      "const originalSpawn = cp.spawnSync;",
+      `const inventory = ${JSON.stringify(inventory)};`,
+      "cp.execFileSync = (command, args, ...rest) => command === 'npm'",
+      "  ? inventory : originalExec(command, args, ...rest);",
+      "cp.spawnSync = (command, args, ...rest) => command === 'npm'",
+      "  ? { status: 0, stdout: inventory, stderr: '' } : originalSpawn(command, args, ...rest);",
+    ].join("\n"));
+    for (const [verifier, code] of verifiers) {
+      const result = spawnSync(process.execPath, [
+        "--require", preload, path.resolve(__dirname, "../scripts", verifier),
+      ], { cwd: root, encoding: "utf8" });
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, new RegExp(`code=${code}; counts=`));
+      assert.match(result.stderr, /(?:contributor-record-storage|signed-cla-storage): 1/u);
+      assert.doesNotMatch(result.stderr, /legal\/|docs\/|2026|acceptances|record\.pdf|process\.md|\n\s*at\s/iu);
+    }
+  }
+});
+
 test("retains terminal public documents across literal numeric word wrappers", () => {
   assert.deepEqual(
     findPrivateArtifactViolations([

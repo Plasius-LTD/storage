@@ -439,7 +439,11 @@ an opaque token. Arbitrary substring matches remain outside the closed
 vocabulary. Explicit process, template, policy, schema, and validator
 documents, including compact or separated numeric wrappers such as `V2` and
 `version2`, remain public only when they are terminal files, not record
-directories.
+directories. A terminal document may complete context from an ancestor, as in
+`docs/contributor/acceptance-process.md`. Ancestor markers that already form a
+protected record family still reject the entire path, including
+`docs/contributor/acceptances/process.md`; a public-looking filename cannot
+reclassify record storage. Registry families never receive a document exemption.
 Windows-ignored trailing dots and spaces are removed from each path component
 only for classification, so a path such as `report.csv. ` is rejected while its
 raw package identity remains distinct for exact allowlist and collision checks.
