@@ -2031,7 +2031,8 @@ async function downloadRecord(
   path: string,
   maxBytes: number,
   operation: ImmutableJsonPacketStorageOperation,
-  context: OperationContext
+  context: OperationContext,
+  requireExplicitAbsence = false
 ): Promise<DownloadedRecord> {
   let response: JsonPacketBlobDownloadResponsePort;
   try {
@@ -2042,7 +2043,12 @@ async function downloadRecord(
     );
   } catch (error) {
     if (error instanceof ImmutableJsonPacketStorageError) throw error;
-    if (isNotFound(error)) {
+    const token = storageToken(error);
+    if (
+      isNotFound(error) &&
+      (!requireExplicitAbsence ||
+        (token.status === 404 && token.code === "BlobNotFound"))
+    ) {
       fail("NOT_FOUND", "The requested JSON record was not found.", operation, {
         kind,
       });
@@ -2416,6 +2422,97 @@ async function ensurePacketTimeIndexEntry(
       recordType: "time-window-index",
       retryable: true,
     }
+  );
+}
+
+/** Bind an indexed packet ID across windows before reserving bounded capacity. */
+async function reservePacketTimeIndexEntry(
+  config: ResolvedStoreConfig,
+  kind: ResolvedKind,
+  bounds: TimeWindowBounds,
+  acceptedAt: string,
+  packetId: string,
+  packet: EncodedRecord,
+  observationCandidate: Date,
+  context: OperationContext
+): Promise<void> {
+  // Legacy packets may exist without a head or identity reservation. Verify any
+  // such packet before publishing a reservation that could poison a window.
+  try {
+    const existing = await downloadRecord(
+      config,
+      kind.kind,
+      `${kind.prefix}/packets/${packetId}.json`,
+      kind.maxPacketBytes,
+      "write-packet",
+      context,
+      true
+    );
+    assertDownloadedRecord(
+      existing,
+      packet,
+      "write-packet",
+      kind.kind,
+      "IMMUTABLE_CONFLICT"
+    );
+  } catch (error) {
+    if (
+      error instanceof ImmutableJsonPacketStorageError &&
+      error.code === "STORAGE_OPERATION_FAILED"
+    ) {
+      // A previous attempt may already have committed this packet. A failed
+      // existence lookup cannot discharge the caller's durable outbox item.
+      fail(error.code, error.message, "write-packet", {
+        kind: kind.kind, recordType: "packet", retryable: true, cause: error,
+      });
+    }
+    if (
+      !(error instanceof ImmutableJsonPacketStorageError) ||
+      error.code !== "NOT_FOUND"
+    ) {
+      throw error;
+    }
+  }
+
+  // Deterministic, payload-free and create-only: competing accepted times must
+  // not reserve two windows for the same immutable packet ID. The envelope uses
+  // the existing index schema; acceptedAt fixes observedAt for exact replay.
+  const { prepared } = prepareTimeWindowIndex(
+    kind,
+    bounds,
+    acceptedAt,
+    [
+      {
+        acceptedAt,
+        packetId,
+        schemaId: packet.schemaId,
+        schemaVersion: packet.schemaVersion,
+        sha256: packet.digest,
+        byteLength: packet.bytes.byteLength,
+      },
+    ],
+    "write-packet",
+    config.maxReadBytes
+  );
+  await putImmutable(
+    config,
+    kind.kind,
+    `${kind.timeIndex!.prefix}/reservations/${packetId}.json`,
+    prepared,
+    config.maxReadBytes,
+    "write-packet",
+    "time-window-index",
+    context
+  );
+  await ensurePacketTimeIndexEntry(
+    config,
+    kind,
+    bounds,
+    acceptedAt,
+    packetId,
+    packet,
+    observationCandidate,
+    context
   );
 }
 
@@ -3071,23 +3168,14 @@ export function createImmutableJsonPacketStore<
               { kind: kind.kind, recordType: "time-window-index" }
             );
           }
-          const write = await putImmutable(
-            config,
-            kind.kind,
-            `${kind.prefix}/packets/${packetId}.json`,
-            prepared,
-            kind.maxPacketBytes,
-            "write-packet",
-            "packet",
-            context
-          );
+          let reserved = false;
           if (
             kind.timeIndex !== undefined &&
             acceptedAt !== undefined &&
             acceptedWindow !== undefined &&
             observationCandidate !== undefined
           ) {
-            await ensurePacketTimeIndexEntry(
+            await reservePacketTimeIndexEntry(
               config,
               kind,
               acceptedWindow,
@@ -3097,6 +3185,36 @@ export function createImmutableJsonPacketStore<
               observationCandidate,
               context
             );
+            reserved = true;
+          }
+          let write: { readonly etag: string; readonly replayed: boolean };
+          try {
+            write = await putImmutable(
+              config,
+              kind.kind,
+              `${kind.prefix}/packets/${packetId}.json`,
+              prepared,
+              kind.maxPacketBytes,
+              "write-packet",
+              "packet",
+              context
+            );
+          } catch (error) {
+            // The provider can commit and then fail its response, even with an
+            // apparently permanent status. Keep the reserved outbox repairable.
+            if (
+              reserved &&
+              error instanceof ImmutableJsonPacketStorageError &&
+              error.code !== "IMMUTABLE_CONFLICT"
+            ) {
+              fail(error.code, error.message, "write-packet", {
+                kind: kind.kind,
+                recordType: "packet",
+                retryable: true,
+                cause: error,
+              });
+            }
+            throw error;
           }
           return Object.freeze({
             ...receiptFor(kind, "packet", packetId, prepared, write),
@@ -3413,7 +3531,24 @@ export function createImmutableJsonPacketStore<
               entry.packetId,
               "read-time-window",
               context
-            );
+            ).catch((error: unknown) => {
+              if (
+                error instanceof ImmutableJsonPacketStorageError &&
+                error.code === "NOT_FOUND"
+              ) {
+                fail(
+                  "STORAGE_OPERATION_FAILED",
+                  "An accepted-time reservation is not yet complete.",
+                  "read-time-window",
+                  {
+                    kind: kind.kind,
+                    recordType: "time-window-index",
+                    retryable: true,
+                  }
+                );
+              }
+              throw error;
+            });
             const packetAcceptedAt = isRecord(verified.packet)
               ? verified.packet[timeIndex.timestampField]
               : undefined;

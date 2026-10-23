@@ -89,6 +89,7 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
     options: JsonPacketBlobUploadOptions
   ) => void | Promise<void>;
   onDownload?: (path: string) => void | Promise<void>;
+  onUploaded?: (path: string) => void | Promise<void>;
   onProperties?: (path: string) => void | Promise<void>;
   propertiesResponseFactory?: () => unknown;
   onList?: (
@@ -123,6 +124,7 @@ class MemoryJsonBlobContainer implements JsonPacketBlobContainerPort {
           metadata: { ...options.metadata },
           etag,
         });
+        await this.onUploaded?.(path);
         return this.omitUploadEtag ? {} : { etag };
       },
       download: async (_offset, _count, options) => {
@@ -354,7 +356,12 @@ function indexedPacket(
 function createIndexedStore(
   container = new MemoryJsonBlobContainer(),
   clock: () => Date = () => new Date("2026-07-18T13:05:00.000Z"),
-  partition: "hour" | "day" = "hour"
+  partition: "hour" | "day" = "hour",
+  limits: {
+    maxManifestEntries?: number;
+    maxReadBytes?: number;
+    maxPacketBytes?: number;
+  } = {},
 ) {
   return {
     container,
@@ -372,11 +379,11 @@ function createIndexedStore(
         },
       },
       timeoutMs: 1_000,
-      maxPacketBytes: 8_192,
-      maxReadBytes: 64 * 1024,
+      maxPacketBytes: limits.maxPacketBytes ?? 8_192,
+      maxReadBytes: limits.maxReadBytes ?? 64 * 1024,
       maxListPageItems: 10,
-      maxListPageBytes: 64 * 1024,
-      maxManifestEntries: 100,
+      maxListPageBytes: limits.maxReadBytes ?? 64 * 1024,
+      maxManifestEntries: limits.maxManifestEntries ?? 100,
       clock,
     }),
   };
@@ -1666,7 +1673,7 @@ describe("processor coordination records", () => {
     expect(container.operations).toHaveLength(0);
   });
 
-  it("indexes packet-first, reads one complete aligned window, and exactly replays", async () => {
+  it("reserves index capacity first, reads a complete window, and exactly replays", async () => {
     const { container, store } = createIndexedStore();
     const packetId = "bug_01j1te5t000000000000001101";
     const acceptedAt = "2026-07-18T12:34:56.000Z";
@@ -1688,10 +1695,11 @@ describe("processor coordination records", () => {
       container.operations
         .filter((operation) => operation.type === "upload")
         .map((operation) => operation.path)
-        .slice(0, 2)
+        .slice(0, 3)
     ).toEqual([
-      `feedback/bugs/packets/${packetId}.json`,
+      `feedback-index/bugs/reservations/${packetId}.json`,
       "feedback-index/bugs/windows/2026/07/18/12.json",
+      `feedback/bugs/packets/${packetId}.json`,
     ]);
 
     await expect(
@@ -1718,7 +1726,7 @@ describe("processor coordination records", () => {
     });
   });
 
-  it("repairs a missing index after an ambiguous cross-Blob failure", async () => {
+  it("does not upload a packet when reserving the index fails", async () => {
     const { container, store } = createIndexedStore();
     const packetId = "bug_01j1te5t000000000000001102";
     const indexPath = "feedback-index/bugs/windows/2026/07/18/12.json";
@@ -1747,7 +1755,7 @@ describe("processor coordination records", () => {
       cause: { redacted: true },
     });
     expect(inspect(error, { depth: 10 })).not.toContain("synthetic-secret");
-    expect(container.blobs.has(`feedback/bugs/packets/${packetId}.json`)).toBe(true);
+    expect(container.blobs.has(`feedback/bugs/packets/${packetId}.json`)).toBe(false);
     expect(container.blobs.has(indexPath)).toBe(false);
 
     await expect(
@@ -1756,8 +1764,316 @@ describe("processor coordination records", () => {
         packetId,
         indexedPacket("2026-07-18T12:10:00.000Z")
       )
-    ).resolves.toMatchObject({ replayed: true });
+    ).resolves.toMatchObject({ replayed: false });
     expect(container.blobs.has(indexPath)).toBe(true);
+  });
+
+  describe("accepted-time capacity reservations", () => {
+    const acceptedAt = "2026-07-18T12:10:00.000Z";
+    const indexPath = "feedback-index/bugs/windows/2026/07/18/12.json";
+    const window = {
+      windowStart: "2026-07-18T12:00:00.000Z",
+      windowEnd: "2026-07-18T13:00:00.000Z",
+      maxItems: 1,
+      maxBytes: 64 * 1024,
+    } as const;
+
+    it("rejects an exhausted item ceiling before making the next packet durable", async () => {
+      const { store, container } = createIndexedStore(
+        undefined,
+        undefined,
+        "hour",
+        { maxManifestEntries: 1 },
+      );
+      await store.writePacket("bug", "packet_one", indexedPacket(acceptedAt));
+      await expect(
+        store.writePacket("bug", "packet_two", indexedPacket(acceptedAt)),
+      ).rejects.toMatchObject({
+        code: "LIMIT_EXCEEDED",
+        diagnostic: { retryable: false },
+      });
+      expect(container.blobs.has("feedback/bugs/packets/packet_two.json")).toBe(
+        false,
+      );
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).resolves.toMatchObject({ replayed: true });
+      expect(
+        (await store.readPacketTimeWindow("bug", window)).packets,
+      ).toHaveLength(1);
+    });
+
+    it("rejects an exhausted encoded-byte ceiling before making the next packet durable", async () => {
+      const { store, container } = createIndexedStore();
+      await store.writePacket("bug", "packet_one", indexedPacket(acceptedAt));
+      const bytes = container.blobs.get(indexPath)!.bytes.byteLength;
+      const bounded = createIndexedStore(container, undefined, "hour", {
+        maxPacketBytes: 512,
+        maxReadBytes: bytes + 100,
+      }).store;
+      await expect(
+        bounded.writePacket("bug", "packet_two", indexedPacket(acceptedAt)),
+      ).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+      expect(container.blobs.has("feedback/bugs/packets/packet_two.json")).toBe(
+        false,
+      );
+      await expect(
+        bounded.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).resolves.toMatchObject({ replayed: true });
+    });
+
+    it("lets only the final-slot CAS winner upload a packet", async () => {
+      const { store, container } = createIndexedStore(
+        undefined,
+        undefined,
+        "hour",
+        { maxManifestEntries: 1 },
+      );
+      const results = await Promise.allSettled(
+        ["packet_one", "packet_two"].map((id) =>
+          store.writePacket("bug", id, indexedPacket(acceptedAt)),
+        ),
+      );
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "rejected"),
+      ).toMatchObject([{ reason: { code: "LIMIT_EXCEEDED" } }]);
+      const packets = [...container.blobs.keys()].filter((path) =>
+        path.startsWith("feedback/bugs/packets/"),
+      );
+      expect(packets).toHaveLength(1);
+      const read = await store.readPacketTimeWindow("bug", window);
+      expect(read.packets).toHaveLength(1);
+      expect(packets[0]).toBe(
+        `feedback/bugs/packets/${read.packets[0].packetId}.json`,
+      );
+    });
+
+    it("cannot strand a concurrent byte-ceiling loser", async () => {
+      const seed = createIndexedStore();
+      await seed.store.writePacket(
+        "bug",
+        "packet_seed",
+        indexedPacket(acceptedAt),
+      );
+      const bytes = seed.container.blobs.get(indexPath)!.bytes.byteLength;
+      const { store, container } = createIndexedStore(
+        undefined,
+        undefined,
+        "hour",
+        { maxPacketBytes: 512, maxReadBytes: bytes + 100 },
+      );
+      const results = await Promise.allSettled(
+        ["packet_one", "packet_two"].map((id) =>
+          store.writePacket("bug", id, indexedPacket(acceptedAt)),
+        ),
+      );
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "rejected"),
+      ).toMatchObject([{ reason: { code: "LIMIT_EXCEEDED" } }]);
+      expect(
+        [...container.blobs.keys()].filter((path) =>
+          path.startsWith("feedback/bugs/packets/"),
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("keeps an interrupted reservation repairable even after another writer fills the ceiling", async () => {
+      const { store, container } = createIndexedStore(
+        undefined,
+        undefined,
+        "hour",
+        { maxManifestEntries: 2 },
+      );
+      container.onUpload = (path) => {
+        if (path === "feedback/bugs/packets/packet_one.json")
+          throw storageFailure(503, "ServerBusy");
+      };
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).rejects.toMatchObject({ diagnostic: { retryable: true } });
+      expect(container.blobs.has(indexPath)).toBe(true);
+      expect(container.blobs.has("feedback/bugs/packets/packet_one.json")).toBe(
+        false,
+      );
+      await expect(
+        store.readPacketTimeWindow("bug", { ...window, maxItems: 2 }),
+      ).rejects.toMatchObject({
+        code: "STORAGE_OPERATION_FAILED",
+        diagnostic: { retryable: true },
+      });
+      await store.writePacket("bug", "packet_two", indexedPacket(acceptedAt));
+      container.onUpload = undefined;
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).resolves.toMatchObject({ replayed: false });
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).resolves.toMatchObject({ replayed: true });
+      expect(
+        (await store.readPacketTimeWindow("bug", { ...window, maxItems: 2 }))
+          .packets,
+      ).toHaveLength(2);
+    });
+
+    it("binds packet identity across competing windows without poisoning the losing head", async () => {
+      const { store, container } = createIndexedStore();
+      const results = await Promise.allSettled(
+        [acceptedAt, "2026-07-18T13:10:00.000Z"].map((time) =>
+          store.writePacket("bug", "packet_one", indexedPacket(time)),
+        ),
+      );
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "rejected"),
+      ).toMatchObject([{ reason: { code: "IMMUTABLE_CONFLICT" } }]);
+      const heads = [...container.blobs.keys()].filter((path) =>
+        path.startsWith("feedback-index/bugs/windows/"),
+      );
+      expect(heads).toHaveLength(1);
+      const packet = await store.readPacket("bug", "packet_one");
+      const time = (packet as unknown as IndexedSafePacket).acceptedAt;
+      const hour = time.slice(0, 13);
+      expect(
+        (
+          await store.readPacketTimeWindow("bug", {
+            ...window,
+            windowStart: `${hour}:00:00.000Z`,
+            windowEnd: `${time.slice(0, 11)}${String(Number(time.slice(11, 13)) + 1).padStart(2, "0")}:00:00.000Z`,
+          })
+        ).packets,
+      ).toHaveLength(1);
+    });
+
+    it("does not reserve a conflicting legacy durable packet", async () => {
+      const { store, container } = createIndexedStore();
+      await store.writePacket("bug", "packet_one", indexedPacket(acceptedAt));
+      for (const path of [...container.blobs.keys()])
+        if (path.startsWith("feedback-index/")) container.blobs.delete(path);
+      await expect(
+        store.writePacket(
+          "bug",
+          "packet_one",
+          indexedPacket(acceptedAt, { surfaceId: "changed" }),
+        ),
+      ).rejects.toMatchObject({ code: "IMMUTABLE_CONFLICT" });
+      expect(
+        [...container.blobs.keys()].filter((path) =>
+          path.startsWith("feedback-index/"),
+        ),
+      ).toHaveLength(0);
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).resolves.toMatchObject({ replayed: true });
+    });
+
+    it("keeps a committed packet retryable after a permanent-looking provider response failure", async () => {
+      const { store, container } = createIndexedStore();
+      container.onUploaded = (path) => {
+        if (path === "feedback/bugs/packets/packet_one.json")
+          throw storageFailure(
+            403,
+            "AuthorizationFailure",
+            "synthetic-private-provider-detail",
+          );
+      };
+      const error = await store
+        .writePacket("bug", "packet_one", indexedPacket(acceptedAt))
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        code: "STORAGE_OPERATION_FAILED",
+        diagnostic: { retryable: true },
+        cause: { redacted: true },
+      });
+      expect(inspect(error, { depth: 10 })).not.toContain(
+        "synthetic-private-provider-detail",
+      );
+      expect(container.blobs.has(indexPath)).toBe(true);
+      expect(container.blobs.has("feedback/bugs/packets/packet_one.json")).toBe(
+        true,
+      );
+      container.onUploaded = undefined;
+      container.onDownload = path => {
+        if (path === "feedback/bugs/packets/packet_one.json") throw storageFailure(403, "AuthorizationFailure");
+      };
+      await expect(store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)))
+        .rejects.toMatchObject({ code: "STORAGE_OPERATION_FAILED", diagnostic: { retryable: true } });
+      container.onDownload = undefined;
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).resolves.toMatchObject({ replayed: true });
+      expect(
+        (await store.readPacketTimeWindow("bug", window)).packets,
+      ).toHaveLength(1);
+    });
+
+    it("does not claim identity from an ambiguous legacy-packet 404", async () => {
+      const { store, container } = createIndexedStore();
+      container.onDownload = (path) => {
+        if (path.startsWith("feedback/bugs/packets/"))
+          throw storageFailure(404, "UnknownProviderCode");
+      };
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt)),
+      ).rejects.toMatchObject({ code: "STORAGE_OPERATION_FAILED" });
+      expect(container.blobs.size).toBe(0);
+    });
+
+    it("retains the reservation across cancellation and repairs without changing its snapshot", async () => {
+      const { store, container } = createIndexedStore();
+      const controller = new AbortController();
+      container.onUploaded = (path) => {
+        if (path === indexPath) controller.abort();
+      };
+      await expect(
+        store.writePacket("bug", "packet_one", indexedPacket(acceptedAt), {
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({
+        code: "ABORTED",
+        diagnostic: { retryable: true },
+      });
+      expect(container.blobs.has("feedback/bugs/packets/packet_one.json")).toBe(
+        false,
+      );
+      const index = container.blobs.get(indexPath)!;
+      const before = new Uint8Array(index.bytes);
+      container.onUploaded = undefined;
+      await store.writePacket("bug", "packet_one", indexedPacket(acceptedAt));
+      expect(container.blobs.get(indexPath)!.bytes).toEqual(before);
+      expect(
+        (await store.readPacketTimeWindow("bug", window)).packets,
+      ).toHaveLength(1);
+    });
+
+    it("keeps both identity claims and heads free from packet payload values", async () => {
+      const { store, container } = createIndexedStore();
+      await store.writePacket(
+        "bug",
+        "packet_one",
+        indexedPacket(acceptedAt, { surfaceId: "synthetic-payload-canary" }),
+      );
+      const indexRecords = [...container.blobs.entries()].filter(([path]) =>
+        path.startsWith("feedback-index/"),
+      );
+      expect(indexRecords).toHaveLength(2);
+      for (const [, record] of indexRecords) {
+        const text = new TextDecoder().decode(record.bytes);
+        expect(text).not.toContain("synthetic-payload-canary");
+        expect(text).not.toContain("surfaceId");
+        expect(text).not.toContain("payload");
+      }
+      expect(
+        container.operations.some((operation) => operation.type === "list"),
+      ).toBe(false);
+    });
   });
 
   it("rebuilds a deleted head on replay and keeps packet payloads out of the index", async () => {

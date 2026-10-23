@@ -3,6 +3,9 @@
 - Date: 2026-08-27
 - Status: Accepted
 - Tracked work: [Storage Task #51](https://github.com/Plasius-LTD/storage/issues/51)
+- The packet-first write order and its rejected index-first alternative are
+  superseded by [ADR-0008](./adr-0008-reserve-index-capacity-before-packets.md).
+  The remaining index schema, bounds, integrity and ownership decisions remain.
 
 ## Context
 

@@ -7,3 +7,4 @@
 - [ADR-0005: Exact-main OIDC package publishing](./adr-0005-exact-main-oidc-package-publishing.md)
 - [ADR-0006: Path-Only Private-Artifact Prevention Gates](./adr-0006-path-only-private-artifact-prevention-gates.md)
 - [ADR-0007: CAS Time-Window Packet Indexes](./adr-0007-cas-time-window-packet-indexes.md)
+- [ADR-0008: Reserve Index Capacity Before Packets](./adr-0008-reserve-index-capacity-before-packets.md)
