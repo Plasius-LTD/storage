@@ -18,7 +18,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Security**
-  - (placeholder)
+  - Pin the approved npm release client and recheck the admitted main commit immediately before npm publication.
 
 ## [1.3.11] - 2026-10-23
 

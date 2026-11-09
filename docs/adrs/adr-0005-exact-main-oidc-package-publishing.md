@@ -33,9 +33,14 @@ Use a two-run release protocol:
 6. The hosted `production` job verifies the exact artifact IDs, digests,
    package identity, safe members, npm distribution tag, and SHA-512 registry
    integrity, then repeats the exact-main check before mutation.
-7. Only the verified tarball is published through npm OIDC with provenance.
-   The privileged job installs no dependencies, runs no project scripts, and
-   receives no npm write token.
+7. Immediately before publishing to npm, the production job checks its
+   checkout and fetches remote `main` again. A failed fetch or a mismatch with
+   the admitted SHA stops publication, even if the earlier check passed.
+8. Only the verified tarball is published through npm OIDC with provenance.
+   Both release jobs install the approved npm 11.6.2 client with lifecycle
+   scripts disabled and verify Node.js 24.18.0. The production job installs no
+   project dependencies, runs no project scripts, and receives no npm write
+   token.
 
 Preparation runs are serialized. Publication concurrency includes the prepared
 SHA so the self-dispatched run is not blocked by its own preparation while
@@ -56,7 +61,7 @@ never restores token publication.
 - The restored `privacy:check` package script is a release admission gate.
 - Dependency and third-party code cannot use production OIDC or mutation
   permissions.
-- A moved `main`, mismatched existing package, or stale dispatch fails closed.
+- A moved `main`, failed main fetch, mismatched existing package, or stale dispatch fails closed.
 
 ## Alternatives considered
 
