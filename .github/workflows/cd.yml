@@ -187,6 +187,9 @@ jobs:
           node-version-file: ".nvmrc"
           package-manager-cache: false
 
+      - name: Install pinned npm release client
+        run: npm install --global npm@11.6.2 --ignore-scripts --registry https://registry.npmjs.org
+
       - name: Verify release runtime
         run: |
           set -euo pipefail
@@ -465,6 +468,9 @@ jobs:
         with:
           node-version-file: ".nvmrc"
           package-manager-cache: false
+
+      - name: Install pinned npm release client
+        run: npm install --global npm@11.6.2 --ignore-scripts --registry https://registry.npmjs.org
 
       - name: Verify release runtime
         run: |
@@ -870,6 +876,26 @@ jobs:
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: ${{ steps.release.outputs.sbom_path }}
+
+      - name: Revalidate exact main immediately before npm publication
+        if: steps.release.outputs.should_publish_npm == 'true'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_commit_sha }}
+        run: |
+          set -euo pipefail
+
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "${HEAD_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "Checked-out release commit ${HEAD_SHA} differs from ${EXPECTED_SHA}." >&2
+            exit 1
+          fi
+
+          git fetch origin main --no-tags
+          REMOTE_MAIN="$(git rev-parse refs/remotes/origin/main)"
+          if [ "${REMOTE_MAIN}" != "${EXPECTED_SHA}" ]; then
+            echo "main moved to ${REMOTE_MAIN}; refusing npm publication for ${EXPECTED_SHA}." >&2
+            exit 1
+          fi
 
       - name: Publish package through npm OIDC
         if: steps.release.outputs.should_publish_npm == 'true'

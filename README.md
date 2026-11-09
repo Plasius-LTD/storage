@@ -426,6 +426,15 @@ npm run audit:all
 npm run pack:check
 ```
 
+### Package release
+
+Production publication uses `cd.yml` on protected `main` and npm trusted
+publishing. Pack and publish use Node.js 24.18.0 and npm 11.6.2. If `main`
+advances after the release was qualified, the publish job stops before calling
+npm. Check the prepare run and qualify the current `main` through the usual
+release process; never move a release tag. See
+[ADR-0005](./docs/adrs/adr-0005-exact-main-oidc-package-publishing.md).
+
 ### Private-artifact and package policy
 
 Signed contributor agreements and contributor acceptance records are retained

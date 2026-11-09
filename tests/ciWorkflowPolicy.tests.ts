@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string): string =>
@@ -48,6 +51,65 @@ describe("release workflow trust boundaries", () => {
     expect(cdWorkflow).toContain("-f event=push");
     expect(cdWorkflow).toContain("refs/heads/main");
     expect(releasePrepareWorkflow).toContain("COMMIT_SHA=$(git rev-parse HEAD)");
+  });
+
+  it("installs the approved npm client before validating the release runtime", () => {
+    const jobs = cdWorkflow.slice(cdWorkflow.indexOf("\n  validate_and_pack:"));
+    const pin = "npm install --global npm@11.6.2 --ignore-scripts --registry https://registry.npmjs.org";
+
+    for (const job of jobs.split("\n  publish:")) {
+      expect(job).toContain(pin);
+      expect(job.indexOf(pin)).toBeLessThan(job.indexOf("- name: Verify release runtime"));
+    }
+  });
+
+  it("stops npm publication if the checkout or fetched main differs from the release SHA", () => {
+    const publish = cdWorkflow.slice(cdWorkflow.indexOf("\n  publish:"));
+    const steps = publish.split("\n      - name: ");
+    const publishIndex = steps.findIndex((step) => step.startsWith("Publish package through npm OIDC\n"));
+    expect(publishIndex).toBeGreaterThan(0);
+    const guard = steps[publishIndex - 1];
+    expect(guard).toMatch(/^Revalidate exact main immediately before npm publication\n/u);
+    const script = guard.split("\n        run: |\n")[1];
+    if (!script) throw new Error("Missing pre-publication guard script");
+
+    const root = mkdtempSync(join(tmpdir(), "storage-publish-guard-"));
+    try {
+      const upstream = join(root, "upstream");
+      const checkout = join(root, "checkout");
+      const git = (cwd: string, ...args: string[]) =>
+        execFileSync("git", ["-c", "user.name=Release test", "-c", "user.email=release@example.test",
+          "-c", "commit.gpgSign=false", ...args], { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+      git(root, "init", "--initial-branch=main", upstream);
+      git(upstream, "commit", "--allow-empty", "-m", "Qualified release");
+      git(root, "clone", upstream, checkout);
+      const expected = git(checkout, "rev-parse", "HEAD");
+      const check = () =>
+        spawnSync("bash", ["-c", script], {
+          cwd: checkout, encoding: "utf8", env: { ...process.env, EXPECTED_SHA: expected },
+        });
+
+      expect(check().status).toBe(0);
+
+      git(checkout, "commit", "--allow-empty", "-m", "Different checkout");
+      const mismatchedCheckout = check();
+      expect(mismatchedCheckout.status).toBe(1);
+      expect(mismatchedCheckout.stderr).toContain("Checked-out release commit");
+      git(checkout, "reset", "--hard", expected);
+
+      git(upstream, "commit", "--allow-empty", "-m", "Main advanced");
+      const movedMain = check();
+      expect(movedMain.status).toBe(1);
+      expect(movedMain.stderr).toContain("refusing npm publication");
+
+      git(checkout, "update-ref", "refs/remotes/origin/main", expected);
+      git(checkout, "remote", "set-url", "origin", join(root, "unavailable"));
+      const failedFetch = check();
+      expect(failedFetch.status).toBeGreaterThan(0);
+      expect(failedFetch.stderr).toContain("fatal:");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("uses supported phase-isolated concurrency", () => {
