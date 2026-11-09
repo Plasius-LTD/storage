@@ -18,6 +18,20 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - (placeholder)
 
 - **Security**
+  - (placeholder)
+
+## [1.3.12] - 2026-11-09
+
+- **Added**
+  - (placeholder)
+
+- **Changed**
+  - (placeholder)
+
+- **Fixed**
+  - (placeholder)
+
+- **Security**
   - Pin the approved npm release client and recheck the admitted main commit immediately before npm publication.
 
 ## [1.3.11] - 2026-10-23
@@ -562,7 +576,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.11...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.12...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -608,3 +622,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.9]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.9
 [1.3.10]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.10
 [1.3.11]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.11
+[1.3.12]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.12
