@@ -28,7 +28,7 @@
     "lint": "eslint . --max-warnings=0",
     "prepare": "npm run build",
     "privacy:check": "node scripts/verify-public-artifacts.cjs --package-dir .",
-    "pack:check": "npm run privacy:check && node scripts/verify-public-package.cjs",
+    "pack:check": "node scripts/release-changelog.mjs check CHANGELOG.md && npm run privacy:check && node scripts/verify-public-package.cjs",
     "prepublishOnly": "npm run build && npm run pack:check"
   },
   "author": "Plasius LTD <development@plasius.co.uk>",

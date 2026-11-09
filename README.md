@@ -519,6 +519,12 @@ exact merge SHA, the workflow dispatches a separate `publish` run from that
 same SHA. Publication fails closed if `main`, CI evidence, the version, tag,
 prerelease identity, artifact digests, or npm registry integrity differ.
 
+Add real release notes under `Unreleased` before preparing a release. Use
+only categories that have entries. The preparation workflow moves those notes
+to the new version and leaves an empty `Unreleased` section. It refuses to
+prepare a release with missing notes or placeholder text; `npm run pack:check`
+also rejects placeholder text anywhere in the changelog.
+
 The read-only validation job runs the repository privacy gate, installs
 dependencies, validates the package, builds an SBOM, and seals an immutable
 tarball. The `production` job runs no package lifecycle or dependency code; it
