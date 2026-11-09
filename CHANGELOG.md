@@ -8,6 +8,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.3.13] - 2026-11-09
+
 - **Fixed**
   - Require real changelog notes before preparing a storage release and stop generating placeholder categories.
 
@@ -276,7 +278,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.12...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.13...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -315,3 +317,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.10]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.10
 [1.3.11]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.11
 [1.3.12]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.12
+[1.3.13]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.13
