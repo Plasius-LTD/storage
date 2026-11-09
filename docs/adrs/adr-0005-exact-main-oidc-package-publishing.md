@@ -19,7 +19,12 @@ Use a two-run release protocol:
 1. An operator dispatches `cd.yml` from protected `main` with `phase: prepare`.
 2. The reusable preparation workflow versions the package with lifecycle
    scripts disabled and lands metadata through a unique, non-force-pushed pull
-   request.
+   request. The preparation command requires real notes in populated
+   changelog categories, promotes them to the requested version, and leaves a
+   blank Unreleased section. A rerun verifies the existing version's notes
+   without changing them. Historical headings, links and real notes are
+   retained. Package validation rejects placeholder text anywhere in the
+   changelog, including historical sections.
 3. The prepare run waits for successful push-triggered `ci.yml` evidence whose
    branch, event, head SHA, status, and conclusion match the resulting `main`
    commit.
@@ -52,7 +57,10 @@ repository `storage`, workflow `cd.yml`, environment `production`, and action
 `npm publish`. GitHub `main` and `production` policies are independent
 admission controls. The inherited rollout flag is
 `platform.public-artifact-integrity.enabled`; rollback disables `cd.yml` and
-never restores token publication.
+never restores token publication. Its backend evaluator controls rollout admission (Feature #1022):
+disable it to suspend admission and re-enable after verifying the release
+source, CI and public artifact. Changelog validation remains mandatory in both
+states; no environment override or user entitlement applies.
 
 ## Consequences
 
@@ -64,6 +72,10 @@ never restores token publication.
 - A moved `main`, failed main fetch, mismatched existing package, or stale dispatch fails closed.
 
 ## Alternatives considered
+
+- Seeding placeholder categories or a generic entry for a new version was
+  rejected because it can publish false release history. An empty Unreleased
+  section is safe; creating a new version requires actual notes.
 
 - Publishing after checking out a child commit in the original run was
   rejected because provenance remains bound to the dispatch commit.

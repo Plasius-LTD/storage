@@ -8,115 +8,46 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
 - **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
+  - Require real changelog notes before preparing a storage release and stop generating placeholder categories.
 
 ## [1.3.12] - 2026-11-09
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
 
 - **Security**
   - Pin the approved npm release client and recheck the admitted main commit immediately before npm publication.
 
 ## [1.3.11] - 2026-10-23
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
 - **Fixed**
   - Verify accepted-time window packets with at most eight concurrent reads, preserving canonical output and fail-closed integrity while cancelling active siblings after failure.
 
-- **Security**
-  - (placeholder)
-
 ## [1.3.10] - 2026-10-23
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
 
 - **Fixed**
   - Accept qualified public contributor/CLA documents with hierarchical context
     while retaining fail-closed private-record directories and path-only artifact gates.
 
-- **Security**
-  - (placeholder)
-
 ## [1.3.9] - 2026-10-23
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
 
 - **Fixed**
   - Build standalone privacy coverage inputs automatically and make traversal-error
     redaction tests deterministic across root, ordinary users, and isolated containers.
 
-- **Security**
-  - (placeholder)
-
 ## [1.3.8] - 2026-10-23
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
 
 - **Fixed**
   - Retain indexed outbox retryability across head-read/provider failures and
     legacy durable-packet capacity or corruption repair, while preserving
     terminal immutable conflicts and bounded caller-owned reconciliation.
 
-- **Security**
-  - (placeholder)
-
 ## [1.3.7] - 2026-10-23
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
 
 - **Fixed**
   - Require explicit provider BlobNotFound evidence for accepted-time head
     absence and record not-found results; fail closed with redacted diagnostics
     for ambiguous 404s and adapter-domain errors instead of false empty snapshots.
 
-- **Security**
-  - (placeholder)
-
 ## [1.3.6] - 2026-10-23
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
 
 - **Fixed**
   - Reserve accepted-time index item/byte capacity with bounded CAS before packet
@@ -124,89 +55,30 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     reservations recoverable through exact outbox replay without partial reads.
     Keep identity/head upload response ambiguity retryable as well as packet uploads.
 
-- **Security**
-  - (placeholder)
-
 ## [1.3.5] - 2026-10-18
 
 - Refresh npm dependency lockfile to current supported stable versions (weekly maintenance, 2026-10-18). Refresh published Plasius package baselines after upstream releases.
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.3.4] - 2026-10-11
 
 - Refresh npm dependency lockfile to current supported stable versions (weekly maintenance, 2026-10-11). Refresh published Plasius package baselines after upstream releases.
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.3.3] - 2026-10-04
 
 - Refresh npm dependency lockfile to current supported stable versions (weekly maintenance, 2026-10-04). Refresh published Plasius package baselines after upstream releases.
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.3.2] - 2026-09-28
 
 - Refresh npm dependency lockfile to current supported stable versions (weekly maintenance, 2026-09-28). Refresh published Plasius package baselines after upstream releases.
 
-- **Added**
-  - (placeholder)
-
 - **Changed**
   - Refreshed compatible @plasius/* lockfile resolutions to the latest published releases.
- - (placeholder)
 
 - **Fixed**
   - Preserved hosted pull-request isolation while disabling package-manager
     cache finalization and bounding self-hosted main validation runtime.
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.3.1] - 2026-08-31
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.3.0] - 2026-08-27
 
@@ -219,9 +91,6 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   - Consume the released `@plasius/schema` 1.4.1 and
     `@plasius/entity-manager` 1.2.x lines used by feedback packet producers.
 
-- **Fixed**
-  - (placeholder)
-
 - **Security**
   - Snapshot exact-window Blob properties and integrity metadata only from
     bounded plain data descriptors. Null, accessor-bearing, proxy-failing, or
@@ -229,12 +98,6 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
     corruption errors without invoking provider-controlled getters.
 
 ## [1.2.1] - 2026-08-27
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
 
 - **Fixed**
   - Consume the complete package tar listing when checking for built output so
@@ -337,66 +200,18 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [1.0.19] - 2026-07-13
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
   - Consume the propagated entity-manager and RFC-remediated schema releases (task #26).
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.0.18] - 2026-06-28
 
-- **Added**
-  - (placeholder)
-
 - **Changed**
   - Refreshed `@azure/storage-file-share` to `12.32.0` and aligned the published `@plasius/entity-manager` and `@plasius/schema` dependencies with their latest released versions.
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.0.17] - 2026-06-22
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.0.16] - 2026-06-22
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.0.14] - 2026-05-21
-
-- **Added**
-  - (placeholder)
 
 - **Changed**
   - Removed the unused `react` and `@azure/cosmos` peer dependencies so the published package contract matches the runtime Azure Files helper surface.
@@ -404,149 +219,34 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 - **Fixed**
   - `uploadUserImageShare()` now derives file extensions from supported image MIME types and normalizes unsafe `userId` values into Azure Files-safe directory names.
 
-- **Security**
-  - (placeholder)
-
 ## [1.0.13] - 2026-05-13
-
-- **Added**
-  - (placeholder)
 
 - **Changed**
   - Refreshed dependencies to the latest stable published versions.
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.0.12] - 2026-05-13
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.0.11] - 2026-04-02
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.0.10] - 2026-03-09
-
-- **Added**
-  - (placeholder)
 
 - **Changed**
   - Raised the minimum `@plasius/schema` dependency to `^1.2.6` to align with field exposure and safe serialization support across shared packages.
 
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.0.9] - 2026-03-04
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.0.5] - 2026-03-01
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.0.4] - 2026-02-28
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.0.3] - 2026-02-22
 
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
-
 ## [1.0.2] - 2026-02-22
-
-- **Added**
-  - (placeholder)
-
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.0.1] - 2026-02-13
 
-- **Added**
-  - (placeholder)
-
 - **Changed**
   - Replace dual-`tsc` build steps with `tsup` to emit ESM + CJS + types side-by-side in `dist/` (`index.js`, `index.cjs`, `index.d.ts`).
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 
 ## [1.0.0] - 2026-02-12
 
@@ -583,14 +283,6 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 - **Added**
   - Initial release.
 
-- **Changed**
-  - (placeholder)
-
-- **Fixed**
-  - (placeholder)
-
-- **Security**
-  - (placeholder)
 [1.0.0]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.0
 [1.0.1]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.1
 [1.0.2]: https://github.com/Plasius-LTD/storage/releases/tag/v1.0.2

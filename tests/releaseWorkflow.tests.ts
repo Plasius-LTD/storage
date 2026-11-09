@@ -165,3 +165,88 @@ describe("release snapshot selection", () => {
 function git(repository: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: repository, encoding: "utf8" });
 }
+
+describe("public release notes", () => {
+  it("contains no placeholder marker in the package changelog", async () => {
+    const changelog = await readFile(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    expect(/\(placeholder\)/iu.test(changelog)).toBe(false);
+  });
+
+  it("never seeds placeholder text from release preparation", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/release-prepare.yml", import.meta.url),
+      "utf8"
+    );
+    expect(/\(placeholder\)/iu.test(workflow)).toBe(false);
+  });
+});
+
+describe("changelog promotion", () => {
+  const metadata = {
+    version: "1.2.0",
+    date: "2026-11-09",
+    tag: "v1.2.0",
+    repository: "Plasius-LTD/storage",
+  };
+  const base = "https://github.com/Plasius-LTD/storage";
+  const historical = "## [1.1.0] - 2026-10-23\n\n### Added\n\n- Existing API.\n\n";
+  const oldReference = `[1.1.0]: ${base}/releases/tag/v1.1.0\n`;
+
+  it("promotes real notes, preserves history and refreshes release links", async () => {
+    const { promoteChangelog } = await import("../scripts/release-changelog.mjs");
+    const notes = "- **Fixed**\n  - Ship meaningful release notes.";
+    const input = `# Changelog\n\n## [Unreleased]\n\n${notes}\n\n${historical}` +
+      `[Unreleased]: ${base}/compare/v1.1.0...HEAD\n${oldReference}`;
+
+    const output = promoteChangelog(input, metadata);
+    expect(output).toBe(
+      `# Changelog\n\n## [Unreleased]\n\n## [1.2.0] - 2026-11-09\n\n${notes}\n\n${historical}` +
+      `[Unreleased]: ${base}/compare/v1.2.0...HEAD\n${oldReference}` +
+      `[1.2.0]: ${base}/releases/tag/v1.2.0\n`
+    );
+    expect(promoteChangelog(output, metadata)).toBe(output);
+  });
+
+  it("supports standard category headings and an unbracketed Unreleased heading", async () => {
+    const { promoteChangelog } = await import("../scripts/release-changelog.mjs");
+    const input = "## Unreleased\r\n\r\n### Added\r\n\r\n- First real note.\r\n";
+    const output = promoteChangelog(input, metadata);
+    expect(output).toContain("## Unreleased\r\n\r\n## [1.2.0] - 2026-11-09\r\n");
+    expect(output).toContain("### Added\r\n\r\n- First real note.\r\n");
+    expect(output).toContain(`[Unreleased]: ${base}/compare/v1.2.0...HEAD\r\n`);
+  });
+
+  it.each(["", "### Fixed\n", "- **Fixed**\n  -   \n", "- (no notable changes)\n",
+    "### Fixed\n\n- Fix release notes.\n\n### Added\n"])(
+    "fails closed if notes or any declared category are empty (%j)",
+    async (notes) => {
+      const { promoteChangelog } = await import("../scripts/release-changelog.mjs");
+      expect(() => promoteChangelog(`## [Unreleased]\n\n${notes}`, metadata)).toThrow(/Add real notes/);
+    }
+  );
+
+  it("rejects unsafe metadata, missing sections, and a version prefix match", async () => {
+    const { assertChangelog, promoteChangelog } = await import("../scripts/release-changelog.mjs");
+    expect(() => promoteChangelog(historical, metadata)).toThrow(/missing its Unreleased section/);
+    expect(() => promoteChangelog(historical, { ...metadata, tag: "../malicious" })).toThrow(/Invalid/);
+    expect(() => assertChangelog("## [1.2.01] - 2026-11-09\n\n- Note.\n", "1.2.0")).toThrow(/missing/);
+    expect(() => assertChangelog("## [1.2.0] - 2026-11-09\n\n### Fixed\n", "1.2.0")).toThrow(/real notes/);
+  });
+
+  it("rejects placeholders in historical or pending notes without rewriting the file", async () => {
+    const { runChangelogCommand } = await import("../scripts/release-changelog.mjs");
+    const directory = await mkdtemp(join(tmpdir(), "storage-changelog-"));
+    temporaryDirectories.push(directory);
+    const file = join(directory, "CHANGELOG.md");
+    const clean = "## [Unreleased]\n\n### Fixed\n\n- Preserve release history.\n\n";
+    const dirty = clean + historical + "- (PLACEHOLDER)\n";
+    await writeFile(file, dirty);
+    expect(() => runChangelogCommand(["check", file])).toThrow(/placeholder/);
+    expect(() => runChangelogCommand(["prepare", file, ...Object.values(metadata)])).toThrow(/placeholder/);
+    expect(await readFile(file, "utf8")).toBe(dirty);
+    await writeFile(file, clean + historical + oldReference);
+    runChangelogCommand(["prepare", file, ...Object.values(metadata)]);
+    runChangelogCommand(["check", file, metadata.version]);
+    expect(await readFile(file, "utf8")).toContain("## [1.2.0] - 2026-11-09");
+  });
+});
