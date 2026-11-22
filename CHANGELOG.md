@@ -8,6 +8,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.3.15] - 2026-11-22
+
 - Consume the verified upstream security releases from the weekly dependency rollout; retain existing runtime contracts.
 
 ## [1.3.14] - 2026-11-22
@@ -284,7 +286,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.14...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.15...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -325,3 +327,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.12]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.12
 [1.3.13]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.13
 [1.3.14]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.14
+[1.3.15]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.15
