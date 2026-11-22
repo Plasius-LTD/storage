@@ -8,6 +8,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+- Consume the verified upstream security releases from the weekly dependency rollout; retain existing runtime contracts.
+
 ## [1.3.14] - 2026-11-22
 
 - Refresh supported npm dependency and security tooling baselines; preserve runtime API contracts (weekly maintenance, 2026-11-22).
