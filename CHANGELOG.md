@@ -8,6 +8,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.3.16] - 2026-11-24
+
 - Fix release preparation so an incomplete version is reused only when its tag is absent or identifies the current commit; conflicting tags remain immutable and require a fresh version.
 
 ## [1.3.15] - 2026-11-22
@@ -288,7 +290,7 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ---
 
-[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.15...HEAD
+[Unreleased]: https://github.com/Plasius-LTD/storage/compare/v1.3.16...HEAD
 
 ## [1.0.0] - 2026-02-11
 
@@ -330,3 +332,4 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 [1.3.13]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.13
 [1.3.14]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.14
 [1.3.15]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.15
+[1.3.16]: https://github.com/Plasius-LTD/storage/releases/tag/v1.3.16
