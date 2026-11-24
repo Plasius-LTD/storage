@@ -25,6 +25,62 @@ afterEach(async () => {
 });
 
 describe("release snapshot selection", () => {
+  it.each([
+    ["absent", false, false, "patch", "1.2.0"],
+    ["current", false, false, "patch", "1.2.0"],
+    ["annotated-current", false, false, "patch", "1.2.0"],
+    ["older", false, false, "patch", "1.2.1"],
+    ["annotated-older", false, false, "patch", "1.2.1"],
+    ["non-commit", false, false, "patch", "1.2.1"],
+    ["current", true, true, "patch", "1.2.1"],
+    ["older", false, false, "none", "1.2.0"],
+  ])("selects an immutable release with tag=%s, published=%s, complete=%s, bump=%s",
+    async (tagState, published, complete, bump, expected) => {
+      const repository = await mkdtemp(join(tmpdir(), "storage-tag-reuse-"));
+      temporaryDirectories.push(repository);
+      git(repository, "init", "--initial-branch=main");
+      git(repository, "config", "user.name", "Release Test");
+      git(repository, "config", "user.email", "release-test@example.invalid");
+      await writeFile(join(repository, "CHANGELOG.md"), "## [1.2.0] - 2026-01-01\n");
+      git(repository, "add", "CHANGELOG.md");
+      git(repository, "commit", "-m", "prepare");
+      if (tagState !== "absent") {
+        if (tagState === "non-commit") {
+          git(repository, "update-ref", "refs/tags/v1.2.0", git(repository, "rev-parse", "HEAD:CHANGELOG.md").trim());
+        } else if (tagState === "annotated-older" || tagState === "annotated-current") {
+          git(repository, "tag", "-a", "v1.2.0", "-m", "release");
+        } else {
+          git(repository, "tag", "v1.2.0");
+        }
+      }
+      const tagsBefore = git(repository, "show-ref", "--tags", "--head");
+      if (tagState === "older" || tagState === "annotated-older") {
+        git(repository, "commit", "--allow-empty", "-m", "advance main");
+      }
+      const workflow = await readFile(new URL("../.github/workflows/release-prepare.yml", import.meta.url), "utf8");
+      const start = workflow.indexOf('          CURRENT_TAG="');
+      const end = workflow.indexOf('          TAG="${TAG_PREFIX}${TARGET_VER}"', start);
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      // Execute the actual workflow selection with real Git tags and offline registry adapters.
+      const selected = execFileSync("bash", ["-c", [
+        "set -euo pipefail",
+        'npm() { if [ "$1" = view ]; then [ "$TEST_PUBLISHED" = true ]; elif [ "$1" != version ]; then return 99; fi; }',
+        'gh() { [ "$TEST_COMPLETE" = true ] || return 1; if [ "$#" -gt 3 ]; then echo false; fi; }',
+        workflow.slice(start, end).replace(/^ {10}/gmu, ""),
+        'printf "SELECTED=%s\\n" "$TARGET_VER"',
+      ].join("\n")], {
+        cwd: repository,
+        encoding: "utf8",
+        env: { ...process.env, TAG_PREFIX: "v", CURRENT_VER: "1.2.0", NAME: "@example/package",
+          FILE: "CHANGELOG.md", BUMP: String(bump), PREID: "", REGISTRY_VER: "1.2.0", TAG_VER: "1.2.0",
+          PACKAGE_DIRECTORY: ".", TEST_PUBLISHED: String(published), TEST_COMPLETE: String(complete) },
+      });
+      expect(selected).toContain(`SELECTED=${expected}\n`);
+      expect(git(repository, "show-ref", "--tags", "--head").split("\n").filter((line) => line.includes("refs/tags/")))
+        .toEqual(tagsBefore.split("\n").filter((line) => line.includes("refs/tags/")));
+    });
+
   it("binds publication to the immutable workflow-dispatch commit", () => {
     const dispatchSha = "a".repeat(40);
     expect(
