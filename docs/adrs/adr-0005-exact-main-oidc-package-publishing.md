@@ -52,6 +52,15 @@ SHA so the self-dispatched run is not blocked by its own preparation while
 duplicate publication attempts for the same SHA remain non-cancelling.
 Conflicting release tags are never rewritten.
 
+Task #100 recovers the interrupted-release selection guard: before reusing an
+incomplete version for an ordinary bump, preparation requires either no tag or
+a tag resolving to the current commit. Both lightweight and annotated tags are
+checked; a non-commit tag is not reusable. A conflicting tag selects a fresh
+version through the existing bump and changelog policy. Explicit `bump: none`
+retains its existing fail-closed publication checks. Executable shell tests
+exercise the actual workflow selection against real local Git tags and offline
+registry/release adapters, including proof that existing tags remain unchanged.
+
 The npm trusted publisher is externally bound to organization `Plasius-LTD`,
 repository `storage`, workflow `cd.yml`, environment `production`, and action
 `npm publish`. GitHub `main` and `production` policies are independent

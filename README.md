@@ -507,6 +507,12 @@ MIT
 <!-- BEGIN PLASIUS RELEASE INTEGRITY -->
 ## Release integrity
 
+An ordinary release bump can reuse an incomplete version only when its tag is
+absent or resolves to the current commit. A tag bound to an older commit (or a
+non-commit object) requires a fresh version and real Unreleased notes. Tags are
+never moved. Explicit `bump: none` remains subject to the publication identity
+checks and does not bypass an existing tag conflict.
+
 CI keeps the administrative contributor registry outside Git and npm package
 artifacts using exact, case-normalised path checks. Pull requests run on
 GitHub-hosted runners after same-repository admission; protected `main` CI uses

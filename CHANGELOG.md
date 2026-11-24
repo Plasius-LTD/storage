@@ -8,6 +8,8 @@ The format is based on **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+- Fix release preparation so an incomplete version is reused only when its tag is absent or identifies the current commit; conflicting tags remain immutable and require a fresh version.
+
 ## [1.3.15] - 2026-11-22
 
 - Consume the verified upstream security releases from the weekly dependency rollout; retain existing runtime contracts.

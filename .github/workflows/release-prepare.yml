@@ -226,6 +226,13 @@ jobs:
           fi
 
           CURRENT_TAG="${TAG_PREFIX}${CURRENT_VER}"
+          CURRENT_HEAD_SHA="$(git rev-parse HEAD)"
+          CURRENT_TAG_REUSABLE="false"
+          if ! git show-ref --verify --quiet "refs/tags/${CURRENT_TAG}"; then
+            CURRENT_TAG_REUSABLE="true"
+          elif [ "$(git rev-parse --verify "refs/tags/${CURRENT_TAG}^{commit}" 2>/dev/null || true)" = "${CURRENT_HEAD_SHA}" ]; then
+            CURRENT_TAG_REUSABLE="true"
+          fi
           if npm view "${NAME}@${CURRENT_VER}" version >/dev/null 2>&1; then
             CURRENT_PUBLISHED="true"
           else
@@ -243,7 +250,7 @@ jobs:
 
           if [ "${BUMP}" = "none" ]; then
             TARGET_VER="${CURRENT_VER}"
-          elif grep -Eq "^## (\[${CURRENT_VER}\]|${CURRENT_VER})( |$)" "${FILE}" && { [ "${CURRENT_PUBLISHED}" != "true" ] || [ "${CURRENT_RELEASE_STATE}" != "published" ]; }; then
+          elif [ "${CURRENT_TAG_REUSABLE}" = "true" ] && grep -Eq "^## (\[${CURRENT_VER}\]|${CURRENT_VER})( |$)" "${FILE}" && { [ "${CURRENT_PUBLISHED}" != "true" ] || [ "${CURRENT_RELEASE_STATE}" != "published" ]; }; then
             echo "Reusing already-prepared incomplete release version ${CURRENT_VER}."
             TARGET_VER="${CURRENT_VER}"
           else
